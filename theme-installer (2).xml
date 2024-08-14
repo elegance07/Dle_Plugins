@@ -1,0 +1,293 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dleplugin>
+	<name>Theme Installer</name>
+	<description>Zip formatındaki DLE temalarını yükleyen basit bir eklenti.</description>
+	<icon>engine/skins/images/icons/theme_installer.png</icon>
+	<version>1.0.0</version>
+	<dleversion>13</dleversion>
+	<versioncompare>greater</versioncompare>
+	<upgradeurl></upgradeurl>
+	<filedelete>0</filedelete>
+	<needplugin></needplugin>
+	<mnotice>0</mnotice>
+	<mysqlinstall><![CDATA[INSERT INTO `{prefix}_admin_sections` (name, title, descr, icon, allow_groups) 
+    VALUES ('theme_installer', 'Theme Installer', 'Install DLE themes from zip', 'fa-paint-brush', '1,2');]]></mysqlinstall>
+	<mysqlupgrade><![CDATA[]]></mysqlupgrade>
+	<mysqlenable><![CDATA[]]></mysqlenable>
+	<mysqldisable><![CDATA[]]></mysqldisable>
+	<mysqldelete><![CDATA[DELETE FROM `{prefix}_admin_sections` WHERE name = 'theme_installer';]]></mysqldelete>
+	<phpinstall><![CDATA[]]></phpinstall>
+	<phpupgrade><![CDATA[]]></phpupgrade>
+	<phpenable><![CDATA[]]></phpenable>
+	<phpdisable><![CDATA[]]></phpdisable>
+	<phpdelete><![CDATA[]]></phpdelete>
+	<notice><![CDATA[]]></notice>
+	<file name="engine/inc/theme_installer.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+
+// Hata Raporlama Ayarları
+if (!defined('E_DEPRECATED')) {
+    @error_reporting(E_ALL ^ E_WARNING ^ E_NOTICE);
+    @ini_set('error_reporting', E_ALL ^ E_WARNING ^ E_NOTICE);
+} else {
+    @error_reporting(E_ALL ^ E_WARNING ^ E_DEPRECATED ^ E_NOTICE);
+    @ini_set('error_reporting', E_ALL ^ E_WARNING ^ E_DEPRECATED ^ E_NOTICE);
+}
+
+// Hata Raporlama Açık/Kapalı
+$debug = true; // Geliştirme aşamasında true, canlı sistemde false olmalıdır.
+
+if ($debug) {
+    ini_set('display_errors', 1);
+    ini_set('display_startup_errors', 1);
+    error_reporting(E_ALL);
+} else {
+    ini_set('display_errors', 0);
+    error_reporting(0);
+}
+
+if (!defined('DATALIFEENGINE') || !defined('LOGGED_IN')) {
+    die("Hacking attempt!");
+}
+
+include DLEPlugins::Check(ENGINE_DIR . '/inc/theme_installer_function.php');
+
+echoheader("Theme Installer", "Upload and Install DLE Themes");
+
+echo <<<HTML
+<div class="panel panel-default">
+    <div class="panel-heading">
+        <h3 class="panel-title">Tema Yükleyici</h3>
+    </div>
+    <div class="panel-body">
+        <form id="theme-upload-form" action="engine/ajax/theme_installer.php" method="POST" enctype="multipart/form-data" class="form-horizontal">
+            <div class="form-group">
+                <label for="theme_zip" class="col-sm-2 control-label">Tema Dosyası:</label>
+                <div class="col-sm-10">
+                    <input type="file" name="theme_zip" id="theme_zip" class="form-control-file" required style="display:none;">
+                    <label for="theme_zip" class="btn btn-info btn-block">Dosya Seç</label>
+                    <span id="file-name" class="text-muted">Henüz dosya seçilmedi.</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <div class="col-sm-offset-2 col-sm-10">
+                    <button type="submit" class="btn btn-primary btn-block">Yükle ve Kur</button>
+                </div>
+            </div>
+            <div class="progress" id="upload-progress" style="display:none; position: relative; margin-top: 10px;">
+                <div id="upload-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%;"></div>
+            </div>
+            <div id="progress-percent" class="text-center text-muted" style="margin-top: 5px;">0%</div>
+        </form>
+        <div id="message-div" class="alert" style="display: none; margin-top: 10px;"></div>
+    </div>
+</div>
+
+<script>
+document.getElementById("theme-upload-form").addEventListener("submit", function(event) {
+    event.preventDefault();
+
+    var formData = new FormData(this);
+    var uploadProgressBar = document.getElementById("upload-progress-bar");
+    var messageDiv = document.getElementById("message-div");
+
+    $.ajax({
+        url: "engine/ajax/controller.php?mod=theme_installer",
+        type: "POST",
+        data: formData,
+        contentType: false,
+        processData: false,
+        xhr: function() {
+            var xhr = new window.XMLHttpRequest();
+            xhr.upload.addEventListener("progress", function(evt) {
+                if (evt.lengthComputable) {
+                    var percentComplete = evt.loaded / evt.total * 100;
+                    uploadProgressBar.style.width = percentComplete + '%';
+                    document.getElementById("progress-percent").textContent = Math.round(percentComplete) + '% Yüklendi';
+                }
+            }, false);
+            return xhr;
+        },
+        success: function(response) {
+            try {
+                if (response.status === "success") {
+                    messageDiv.style.display = "block";
+                    messageDiv.className = "alert alert-success";
+                    messageDiv.textContent = "Tema başarıyla yüklendi: " + response.message;
+                } else {
+                    messageDiv.style.display = "block";
+                    messageDiv.className = "alert alert-danger";
+                    messageDiv.textContent = "Hata: " + response.message;
+                }
+            } catch (e) {
+                messageDiv.style.display = "block";
+                messageDiv.className = "alert alert-danger";
+                messageDiv.textContent = "Sunucudan geçerli bir yanıt alınamadı.";
+                console.error("Sunucu yanıtı:", response);
+                console.error("Hata:", e);
+            }
+        },
+        error: function(jqXHR, textStatus, errorThrown) {
+            console.error("AJAX isteği sırasında bir hata oluştu: " + textStatus + " - " + errorThrown);
+            messageDiv.style.display = "block";
+            messageDiv.className = "alert alert-danger";
+            messageDiv.textContent = "Yükleme sırasında bir hata oluştu: " + textStatus + " - " + errorThrown;
+        }
+    });
+});
+
+document.getElementById("theme_zip").addEventListener("change", function() {
+    var fileName = this.files[0].name;
+    document.getElementById("file-name").textContent = fileName;
+    document.getElementById("file-label").textContent = "Seçildi: " + fileName;
+    document.getElementById("upload-progress").style.display = "block";
+});
+</script>
+
+HTML;
+
+echofooter();
+
+?>
+]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/ajax/theme_installer.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+/*
+=============================================
+ Name      : Theme Installer AJAX
+ Author    : Your Name
+ License   : MIT License
+=============================================
+*/
+
+if (!defined('DATALIFEENGINE')) {
+    header("HTTP/1.1 403 Forbidden");
+    header('Location: ../../');
+    die("Hacking attempt!");
+}
+
+define('TEMPLATE_DIR', ROOT_DIR . "/templates/");
+
+include DLEPlugins::Check(ENGINE_DIR . '/inc/theme_installer_function.php');
+
+try {
+    if (isset($_FILES['theme_zip'])) {
+        $upload_response = upload_theme($_FILES['theme_zip']);
+        if ($upload_response['status'] === 'success') {
+            $extract_response = extract_theme($upload_response['file_path'], TEMPLATE_DIR);
+            header('Content-Type: application/json');
+            echo json_encode($extract_response);
+        } else {
+            header('Content-Type: application/json');
+            echo json_encode($upload_response);
+        }
+    } elseif (isset($_POST['unzip']) && isset($_POST['file_path'])) {
+        $extract_response = extract_theme($_POST['file_path'], TEMPLATE_DIR);
+        header('Content-Type: application/json');
+        echo json_encode($extract_response);
+    } else {
+        throw new Exception('Dosya yüklenmedi veya geçerli bir istek yapılmadı.');
+    }
+} catch (Exception $e) {
+    header('Content-Type: application/json');
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'Bir hata oluştu: ' . $e->getMessage(),
+        'line' => $e->getLine(),
+        'file' => $e->getFile()
+    ]);
+}
+?>
+]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/theme_installer_function.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if (!defined('DATALIFEENGINE')) {
+    die("Hacking attempt!");
+}
+
+include_once ENGINE_DIR . '/classes/zipextract.class.php';
+
+function extract_theme($zip_file, $extract_to) {
+    $response = [];
+
+    try {
+        // ZIP dosyasının varlığını kontrol edin
+        if (!file_exists($zip_file)) {
+            throw new Exception("ZIP dosyası bulunamadı: " . $zip_file);
+        }
+
+        // ZIP dosyasını açmaya çalış
+        $zip = new dle_zip_extract($zip_file);
+        $zip->SetFilesRoot($extract_to);
+
+        // Dosyaları çıkar
+        $extracted_files = $zip->ExtractZipArchive();
+
+        if (!empty($zip->errors_list)) {
+            $error_details = implode(', ', array_map(function($error) {
+                return $error['file'] . ': ' . $error['error'];
+            }, $zip->errors_list));
+
+            throw new Exception("Bazı dosyalar çıkarılamadı. Hatalar: " . $error_details);
+        }
+
+        // Başarıyla çıkarıldıysa
+        if ($extracted_files > 0) {
+            $response['status'] = 'success';
+            $response['message'] = "ZIP arşivi başarıyla açıldı! Toplam çıkarılan dosya sayısı: " . $extracted_files;
+
+            // Zip dosyasını sil
+            if (file_exists($zip_file)) {
+                unlink($zip_file);
+                $response['message'] .= " Zip dosyası başarıyla silindi.";
+            } else {
+                $response['message'] .= " Ancak zip dosyası silinirken bir sorun oluştu.";
+            }
+        } else {
+            throw new Exception("ZIP dosyası açıldı, ancak hiçbir dosya çıkarılmadı.");
+        }
+
+    } catch (Exception $e) {
+        $response['status'] = 'error';
+        $response['message'] = 'Hata: ' . $e->getMessage();
+        // Hata detaylarını log'a yaz
+        error_log("Zip dosyası açılamadı: " . $e->getMessage());
+    }
+
+    return $response;
+}
+
+
+function upload_theme($file) {
+    $target_dir = TEMPLATE_DIR;
+    $target_file = $target_dir . basename($file["name"]);
+    $file_type = strtolower(pathinfo($target_file, PATHINFO_EXTENSION));
+
+    if ($file_type != "zip") {
+        return ['status' => 'error', 'message' => 'Sadece ZIP dosyalarına izin veriliyor.'];
+    }
+
+    if (move_uploaded_file($file["tmp_name"], $target_file)) {
+        return ['status' => 'success', 'file_path' => $target_file];
+    } else {
+        $error_message = 'Dosya yüklenirken bir hata oluştu.';
+        // Hata detaylarını log'a yaz
+        error_log($error_message . " Dosya: " . $file["name"]);
+        return ['status' => 'error', 'message' => $error_message];
+    }
+}
+?>
+]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+</dleplugin>
