@@ -1,0 +1,630 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dleplugin>
+	<name>TMDB</name>
+	<description>TMDB API Entegrasyonu ile Film Çekme</description>
+	<icon>engine/skins/images/tmdb/tmdb.png</icon>
+	<version>1.0.0</version>
+	<dleversion>13</dleversion>
+	<versioncompare>greater</versioncompare>
+	<upgradeurl></upgradeurl>
+	<filedelete>0</filedelete>
+	<needplugin></needplugin>
+	<mnotice>0</mnotice>
+	<mysqlinstall><![CDATA[REPLACE INTO {prefix}_admin_sections (name, title, descr, icon, allow_groups) VALUES ('tmdb', 'TMDB', 'The movie database TMDB', 'tmdb.png', '1,2');
+		CREATE TABLE IF NOT EXISTS `{prefix}_tmdbconfig` (
+		  `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		  `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+		  `value` text COLLATE utf8mb4_unicode_ci NOT NULL,
+		  `t` varchar(200) COLLATE utf8mb4_unicode_ci NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;]]></mysqlinstall>
+	<mysqlupgrade><![CDATA[]]></mysqlupgrade>
+	<mysqlenable><![CDATA[REPLACE INTO {prefix}_admin_sections (name, title, descr, icon, allow_groups) VALUES ('tmdb', 'TMDB', 'The movie database TMDB', 'tmdb.png', '1,2');
+		CREATE TABLE IF NOT EXISTS `{prefix}_tmdbconfig` (
+		  `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		  `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+		  `value` text COLLATE utf8mb4_unicode_ci NOT NULL,
+		  `t` varchar(200) COLLATE utf8mb4_unicode_ci NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;]]></mysqlenable>
+	<mysqldisable><![CDATA[DELETE FROM {prefix}_admin_sections WHERE name = 'tmdb';
+		DROP TABLE IF EXISTS `{prefix}_tmdbconfig`;]]></mysqldisable>
+	<mysqldelete><![CDATA[DELETE FROM {prefix}_admin_sections WHERE name = 'tmdb';
+		DROP TABLE IF EXISTS `{prefix}_tmdbconfig`;]]></mysqldelete>
+	<phpinstall><![CDATA[]]></phpinstall>
+	<phpupgrade><![CDATA[]]></phpupgrade>
+	<phpenable><![CDATA[]]></phpenable>
+	<phpdisable><![CDATA[]]></phpdisable>
+	<phpdelete><![CDATA[]]></phpdelete>
+	<notice><![CDATA[]]></notice>
+	<file name="engine/inc/tmdb_function.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+
+if (!defined("DATALIFEENGINE")) {
+    error_log("DATALIFEENGINE tanımsız! Hacking attempt!");
+    exit("Hacking attempt!");
+}
+
+class TMDBIntegration
+{
+    private $apiKey;
+    private $baseUrl = "https://api.themoviedb.org/3/";
+
+    public function __construct($apiKey)
+    {
+        $this->apiKey = $apiKey;
+        error_log("TMDBIntegration sınıfı başlatıldı. API Key: " . $this->apiKey);
+    }
+
+    public function searchMovie($query)
+    {
+        $config = get_tmdb_config();
+        $language = isset($config['language_settings']['tmdb_language']) ? $config['language_settings']['tmdb_language'] : 'en';
+        $url = $this->baseUrl . "search/movie?api_key=" . $this->apiKey . "&query=" . urlencode($query) . "&language=" . $language;
+        error_log("searchMovie fonksiyonu çağrıldı. URL: " . $url);
+        return $this->makeRequest($url);
+    }
+
+    public function getMovieById($id)
+    {
+        $config = get_tmdb_config();
+        $language = isset($config['language_settings']['tmdb_language']) ? $config['language_settings']['tmdb_language'] : 'en-US';
+        $url = $this->baseUrl . "movie/" . urlencode($id) . "?api_key=" . $this->apiKey . "&append_to_response=release_dates,keywords,credits,images,videos&language=" . $language;
+        error_log("getMovieById fonksiyonu çağrıldı. URL: " . $url);
+        return $this->makeRequest($url);
+    }
+
+    private function makeRequest($url)
+    {
+        $response = @file_get_contents($url);
+        if ($response === FALSE) {
+            error_log("TMDB API isteği başarısız. URL: " . $url);
+            return ['error' => 'Failed to retrieve data from TMDB'];
+        }
+        error_log("TMDB API isteği başarılı. URL: " . $url);
+        return json_decode($response, true);
+    }
+}
+
+function get_tmdb_config() {
+    $config_path = ENGINE_DIR . "/data/tmdb.config.php";
+    if (file_exists($config_path)) {
+        $config_data = file_get_contents($config_path);
+        $decoded_data = json_decode($config_data, true);
+        error_log("TMDB config dosyası yüklendi. Path: " . $config_path);
+        return is_array($decoded_data) ? $decoded_data : [];
+    }
+    error_log("TMDB config dosyası bulunamadı. Path: " . $config_path);
+    return [];
+}
+
+function save_tmdb_config($config) {
+    $config_path = ENGINE_DIR . "/data/tmdb.config.php";
+    $config_data = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+    // Debugging - Config Data Kontrolü
+    error_log("Kaydedilecek TMDB config verisi: " . $config_data);
+
+    if (file_put_contents($config_path, $config_data) === false) {
+        error_log("Config dosyasına yazılamadı. Path: " . $config_path);
+        die("Config dosyasına yazılamadı. Lütfen dosya izinlerini kontrol edin.");
+    }
+    error_log("Config dosyası başarıyla kaydedildi. Path: " . $config_path);
+}
+
+function get_tmdb_api_key() {
+    $config = get_tmdb_config();
+    $api_key = isset($config['api_key']) ? $config['api_key'] : '';
+    error_log("TMDB API key alındı: " . $api_key);
+    return $api_key;
+}
+
+function get_tmdb_field_mappings() {
+    $config = get_tmdb_config();
+    $field_mappings = isset($config['field_mappings']) ? $config['field_mappings'] : [];
+    error_log("Field Mappings alındı: " . print_r($field_mappings, true));
+    return $field_mappings;
+}
+
+function map_tmdb_data_to_xfields($data) {
+    $field_mappings = get_tmdb_field_mappings();
+    $mapped_data = [];
+
+    foreach ($field_mappings as $tmdb_field => $xfield) {
+        if (isset($data[$tmdb_field]) && !empty($xfield)) {
+            if (is_array($data[$tmdb_field])) {
+                if ($tmdb_field == 'genres') {
+                    // 'genres' alanı için 'name' değerlerini virgülle ayırarak birleştir
+                    $mapped_data[$xfield] = implode(', ', array_column($data['genres'], 'name'));
+                    error_log("Genres mapped to: " . $mapped_data[$xfield]);
+                } elseif ($tmdb_field == 'production_companies') {
+                    // 'production_companies' alanı için 'name' değerlerini virgülle ayırarak birleştir
+                    $mapped_data[$xfield] = implode(', ', array_column($data['production_companies'], 'name'));
+                    error_log("Production companies mapped to: " . $mapped_data[$xfield]);
+                } elseif ($tmdb_field == 'production_countries') {
+                    // 'production_countries' alanı için 'name' değerlerini virgülle ayırarak birleştir
+                    $mapped_data[$xfield] = implode(', ', array_column($data['production_countries'], 'name'));
+                    error_log("Production countries mapped to: " . $mapped_data[$xfield]);
+                } else {
+                    // Diğer array verilerini JSON formatına çevir
+                    $mapped_data[$xfield] = json_encode($data[$tmdb_field]);
+                }
+            } else {
+                // Diğer alanları doğrudan ekle
+                $mapped_data[$xfield] = $data[$tmdb_field];
+            }
+        }
+    }
+
+    error_log("TMDB verileri XFields ile eşleştirildi: " . print_r($mapped_data, true));
+    return $mapped_data;
+}
+
+
+?>
+]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/ajax/tmdb.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+
+define("DATALIFEENGINE", true);
+include DLEPlugins::Check(ENGINE_DIR . "/inc/tmdb_function.php");
+
+$api_key = get_tmdb_api_key();
+$tmdb = new TMDBIntegration($api_key);
+$query = trim($_POST["tmdb_query"]);
+
+if (empty($query)) {
+    echo json_encode(["text" => "Empty query"]);
+    exit;
+}
+
+$response = $tmdb->searchMovie($query);
+echo json_encode($response);
+
+
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/ajax/tmdb_details.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+
+define("DATALIFEENGINE", true);
+include DLEPlugins::Check(ENGINE_DIR . "/inc/tmdb_function.php");
+
+// API anahtarını ve dil ayarlarını alın
+$api_key = get_tmdb_api_key();
+$tmdb = new TMDBIntegration($api_key);
+
+// Gelen movie_id'yi alın
+$movieId = trim($_POST["movie_id"]);
+if (empty($movieId)) {
+    echo json_encode(["text" => "Empty movie_id"]);
+    exit;
+}
+
+// API'den film bilgilerini alın
+$response = $tmdb->getMovieById($movieId);
+
+// Eğer bilgi alınamazsa hata mesajı döndürün
+if (!$response) {
+    echo json_encode(["text" => "No data found for the given movie ID"]);
+    exit;
+}
+
+// Veriyi işleyip eşleştiriyoruz
+$mapped_data = map_tmdb_data_to_xfields($response);
+
+// Diğer alanları ekliyoruz
+$mapped_data['title'] = $response['title'] ?? '';
+$mapped_data['release_date'] = $response['release_date'] ?? '';
+$mapped_data['runtime'] = $response['runtime'] ?? '';
+$mapped_data['overview'] = $response['overview'] ?? '';
+$mapped_data['poster_path'] = $response['poster_path'] ?? '';
+$mapped_data['vote_average'] = $response['vote_average'] ?? '';
+$mapped_data['id'] = $response['id'] ?? '';
+$mapped_data['backdrop_path'] = $response['backdrop_path'] ?? '';
+$mapped_data['budget'] = $response['budget'] ?? '';
+$mapped_data['homepage'] = $response['homepage'] ?? '';
+$mapped_data['imdb_id'] = $response['imdb_id'] ?? '';
+$mapped_data['original_language'] = $response['original_language'] ?? '';
+$mapped_data['original_title'] = $response['original_title'] ?? '';
+$mapped_data['popularity'] = $response['popularity'] ?? '';
+$mapped_data['revenue'] = $response['revenue'] ?? '';
+$mapped_data['status'] = $response['status'] ?? '';
+$mapped_data['tagline'] = $response['tagline'] ?? '';
+
+// Genre Names
+if (isset($response['genres']) && is_array($response['genres'])) {
+    $mapped_data['genres'] = implode(', ', array_column($response['genres'], 'name'));
+    error_log("Genres processed: " . $mapped_data['genres']);
+} else {
+    error_log("Genres not found or not an array.");
+}
+
+// Yönetmen Bilgisi
+if (isset($response['credits']['crew']) && is_array($response['credits']['crew'])) {
+    foreach ($response['credits']['crew'] as $crew) {
+        if ($crew['job'] === 'Director') {
+            $mapped_data['director'] = $crew['name'];
+            error_log("Director found: " . $crew['name']);
+            break;
+        }
+    }
+} else {
+    error_log("Director information not found.");
+}
+
+// İlk 8 Aktör
+if (isset($response['credits']['cast']) && is_array($response['credits']['cast'])) {
+    $actors = [];
+    $actor_count = min(8, count($response['credits']['cast']));
+    for ($i = 0; $i < $actor_count; $i++) {
+        $actors[] = $response['credits']['cast'][$i]['name'];
+    }
+    $mapped_data['actors'] = implode(', ', $actors);
+    error_log("Actors processed: " . $mapped_data['actors']);
+} else {
+    error_log("Actors information not found.");
+}
+
+// Yapımcı Firma (Production Companies)
+$mapped_data['production_firm'] = ''; // XFields'deki alan adını "production_firm" olarak kabul ediyorum
+if (isset($response['production_companies']) && is_array($response['production_companies'])) {
+    $production_companies = array_column($response['production_companies'], 'name');
+    $mapped_data['production_firm'] = implode(', ', $production_companies);
+    error_log("Production companies processed: " . $mapped_data['production_firm']);
+} else {
+    error_log("Production companies information not found.");
+}
+
+// Film Çekildiği Yerler (Filming Locations)
+$mapped_data['production_countries'] = ''; // XFields'deki alan adını "production_countries" olarak kabul ediyorum
+if (isset($response['production_countries']) && is_array($response['production_countries'])) {
+    $production_countries = array_column($response['production_countries'], 'name');
+    $mapped_data['production_countries'] = implode(', ', $production_countries);
+    error_log("Filming locations processed: " . $mapped_data['production_countries']);
+} else {
+    error_log("Filming locations information not found.");
+}
+
+
+echo json_encode($mapped_data);
+
+?>
+]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/addnews.php">
+		<operation action="after">
+			<searchcode><![CDATA[<div class="form-group">
+							  <label class="control-label col-sm-2">{$lang['addnews_date']}</label>]]></searchcode>
+			<replacecode><![CDATA[<div class="form-group">
+<label class="control-label col-sm-2">TMDB search:</label>
+<div class="col-sm-10">
+<input type="text" class="form-control width-600 position-left" name="tmdb_query" id="tmdb_query" style="margin-right: 0px;">
+<a href="#" class="btn bg-info-800 btn-sm" id="tmdbbutton">Search TMDB</a>
+<i class="help-button visible-lg-inline-block text-primary-600 fa fa-question-circle position-right" data-rel="popover" data-trigger="hover" data-placement="right" data-content="TMDB Title, link, search"></i>
+<div id="tmdbResult" style="width:100%;background: #f4f4f4;max-width: 720px;"></div>
+</div>
+</div>
+<script type="text/javascript">
+$(document).on("click", "#tmdbbutton", function(){
+    var query = $("#tmdb_query").val();
+    $("#tmdbResult").empty();
+    $.ajax({
+        type: "POST",
+        url: "engine/ajax/controller.php?mod=tmdb",
+        data: { tmdb_query: query },
+        beforeSend: function() { ShowLoading(""); },
+        complete: function() { HideLoading(""); },
+        dataType: "json",
+        success: function(data) {
+            if (data.results) {
+                var results = data.results;
+                var resultHtml = "";
+                results.forEach(function(movie) {
+                    resultHtml += "<div class='tmdb-result' data-movieid='" + movie.id + "' data-title='" + movie.title + "' data-year='" + movie.release_date.split('-')[0] + "'>"
+                    + "<img src='https://image.tmdb.org/t/p/w200" + movie.poster_path + "'><div><p>" + movie.title + " (" + movie.release_date.split('-')[0] + ")</p></div></div>";
+                });
+                $("#tmdbResult").html(resultHtml);
+            } else {
+                $("#tmdbResult").html("<p>No results found</p>");
+            }
+        }
+    });
+});
+$(document).on("click", ".tmdb-result", function(e){
+    e.preventDefault();
+    var movieID = $(this).data("movieid");
+
+    $.post("engine/ajax/controller.php?mod=tmdb_details", { movie_id: movieID }, function(data) {
+        if (data && data.title) {
+            // Verilerin form alanlarına eklenmesi
+            for (var xfield in data) {
+                if (data.hasOwnProperty(xfield)) {
+                    // Xfield'ler için
+                    $("input[name='xfield[" + xfield + "]']").val(data[xfield]);
+                }
+            }
+            // Başlık kısmına gönderir
+            $("input[name='title']").val(data.title); 
+        } else {
+            console.error("No data or title found");
+        }
+    }, "json").fail(function(jqXHR, textStatus, errorThrown) {
+        console.error("Request failed:", textStatus, errorThrown); // Ajax isteğinde hata olup olmadığını kontrol edin
+    });
+});
+
+
+</script>
+<style type="text/css">
+.tmdb-result {
+    display: flex;
+    margin-top: 5px;
+    padding: 5px;
+    background: #f4f4f4;
+    border: 1px solid #ddd;
+    cursor: pointer;
+}
+.tmdb-result img {
+    max-width: 45px;
+    margin-right: 20px;
+}
+.tmdb-result div {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+</style>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/tmdb.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+
+if (!defined("DATALIFEENGINE") || !defined("LOGGED_IN")) {
+    error_log("DATALIFEENGINE veya LOGGED_IN tanımsız! Hacking attempt!");
+    die("Hacking attempt!");
+}
+
+include DLEPlugins::Check(ENGINE_DIR . "/inc/tmdb_function.php");
+error_log("tmdb_function.php dosyası dahil edildi.");
+
+$language_tags = include DLEPlugins::Check(ENGINE_DIR . "/inc/tmdb_tags.php");
+error_log("tmdb_tags.php dosyası dahil edildi.");
+
+if ($member_id['user_group'] != 1) {
+    error_log("Yetkisiz erişim denemesi. User group: " . $member_id['user_group']);
+    msg("error", "Access Denied", "You do not have permission to access this section.", "?mod=main");
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $config = get_tmdb_config();
+    $config['api_key'] = trim($_POST['api_key']);
+    $config['field_mappings'] = $_POST['field_mappings'];
+    $config['language_settings'] = [
+        'module_language' => $_POST['language_settings']['module_language'],
+        'tmdb_language' => $_POST['language_settings']['tmdb_language']
+    ];
+    error_log("TMDB ayarları kaydediliyor: " . print_r($config, true));
+    save_tmdb_config($config);
+    error_log("TMDB ayarları kaydedildi.");
+    msg("info", "Settings Saved", "Your settings have been saved.", "?mod=tmdb");
+}
+
+$config = get_tmdb_config();
+$api_key = isset($config['api_key']) ? $config['api_key'] : '';
+$field_mappings = array_merge([
+    'title' => '',
+    'release_date' => '',
+    'runtime' => '',
+    'genres' => '',
+    'director' => '',
+    'overview' => '',
+    'poster_path' => '',
+    'vote_average' => '',
+    'id' => '',
+    'backdrop_path' => '',
+    'budget' => '',
+    'homepage' => '',
+    'imdb_id' => '',
+    'original_language' => '',
+    'original_title' => '',
+    'popularity' => '',
+    'revenue' => '',
+    'status' => '',
+    'tagline' => '',
+    'release_dates' => '',
+    'keywords' => '',
+    'credits' => '',
+    'actors' => '',  
+    'production_companies' => '',  // Yapımcı firma alanı
+    'production_countries' => '',  // Film çekildiği yerler alanı
+    'videos' => ''
+], isset($config['field_mappings']) ? $config['field_mappings'] : []);
+$language_settings = isset($config['language_settings']) ? $config['language_settings'] : [];
+
+error_log("TMDB config yüklendi: " . print_r($config, true));
+
+$xfields = file(ENGINE_DIR . '/data/xfields.txt');
+$xfields_list = [];
+foreach ($xfields as $xfield) {
+    $xfield = explode('|', trim($xfield));
+    $xfields_list[$xfield[0]] = $xfield[1];
+}
+
+error_log("XFields listesi yüklendi: " . print_r($xfields_list, true));
+
+$tmdb_fields = [
+    'title' => 'Title',
+    'release_date' => 'Release Date',
+    'runtime' => 'Runtime',
+    'genres' => 'Genres',
+    'director' => 'Director',
+    'overview' => 'Overview',
+    'poster_path' => 'Poster',
+    'vote_average' => 'Rating',
+    'id' => 'TMDB ID',
+    'backdrop_path' => 'Backdrop',
+    'budget' => 'Budget',
+    'homepage' => 'Homepage',
+    'imdb_id' => 'IMDB ID',
+    'original_language' => 'Original Language',
+    'original_title' => 'Original Title',
+    'popularity' => 'Popularity',
+    'revenue' => 'Revenue',
+    'status' => 'Status',
+    'tagline' => 'Tagline',
+    'release_dates' => 'Release Dates',
+    'keywords' => 'Keywords',
+    'credits' => 'Credits',
+    'actors' => 'Actors',
+    'production_companies' => 'Production Companies',  // Yapımcı firma alanı
+    'production_countries' => 'Filming Locations',  // Film çekildiği yerler alanı
+    'videos' => 'Videos'
+];
+
+echoheader("TMDB Settings", "Configure TMDB API Integration");
+
+echo '
+<form method="POST" action="">
+    <div class="navbar navbar-default navbar-component navbar-xs systemsettings" style="margin-bottom: 0px;">
+        <ul class="nav navbar-nav visible-xs-block">
+            <li class="full-width text-center"><a data-toggle="collapse" data-target="#option_menu"><i class="fa fa-bars"></i></a></li>
+        </ul>
+        <div class="navbar-collapse collapse" id="option_menu">
+            <ul class="nav navbar-nav menushka">
+                <li class="none active"><a href="javascript:;" class="main-tab" data-tab="api_settings"><i class="fa fa-cogs" aria-hidden="true"></i> TMDB API Settings</a></li>
+                <li class="none"><a href="javascript:;" class="main-tab" data-tab="field_mappings"><i class="fa fa-list" aria-hidden="true"></i> Field Mappings</a></li>
+                <li class="none"><a href="javascript:;" class="main-tab" data-tab="language_settings"><i class="fa fa-language" aria-hidden="true"></i> Language Settings</a></li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="panel panel-default tab-content" id="api_settings">
+        <div class="panel-heading">
+            <div class="title">TMDB API Settings</div>
+        </div>
+        <div class="panel-body">
+            <div class="form-group">
+                <label for="api_key">API Key</label>
+                <input type="text" class="form-control" id="api_key" name="api_key" value="' . htmlspecialchars($api_key, ENT_QUOTES, 'UTF-8') . '">
+            </div>
+        </div>
+    </div>
+
+    <div class="panel panel-default tab-content" id="field_mappings" style="display: none;">
+        <div class="panel-heading">
+            <div class="title">Field Mappings</div>
+        </div>
+        <div class="panel-body">
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>TMDB Field</th>
+                        <th>XField</th>
+                    </tr>
+                </thead>
+                <tbody>';
+
+foreach ($tmdb_fields as $tmdb_field => $label) {
+    $xfield = isset($field_mappings[$tmdb_field]) ? $field_mappings[$tmdb_field] : '';
+    echo '
+                    <tr>
+                        <td>' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '</td>
+                        <td>
+                            <select class="form-control" name="field_mappings[' . htmlspecialchars($tmdb_field, ENT_QUOTES, 'UTF-8') . ']">
+                                <option value="">Select XField</option>';
+    foreach ($xfields_list as $xfield_key => $xfield_label) {
+        $selected = $xfield_key == $xfield ? 'selected' : '';
+        echo '<option value="' . htmlspecialchars($xfield_key, ENT_QUOTES, 'UTF-8') . '" ' . $selected . '>' . htmlspecialchars($xfield_label, ENT_QUOTES, 'UTF-8') . '</option>';
+    }
+    echo '
+                            </select>
+                        </td>
+                    </tr>';
+}
+
+echo '
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel panel-default tab-content" id="language_settings" style="display: none;">
+        <div class="panel-heading">
+            <div class="title">Language Settings</div>
+        </div>
+        <div class="panel-body">
+            <div class="form-group">
+                <label for="module_language">Module Language</label>
+                <select class="form-control" id="module_language" name="language_settings[module_language]">';
+foreach ($language_tags as $lang_code => $lang_name) {
+    $selected = ($lang_code == $language_settings['module_language']) ? 'selected' : '';
+    echo '<option value="' . htmlspecialchars($lang_code, ENT_QUOTES, 'UTF-8') . '" ' . $selected . '>' . htmlspecialchars($lang_name, ENT_QUOTES, 'UTF-8') . '</option>';
+}
+echo '
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="tmdb_language">TMDB Language</label>
+                <select class="form-control" id="tmdb_language" name="language_settings[tmdb_language]">';
+foreach ($language_tags as $lang_code => $lang_name) {
+    $selected = ($lang_code == $language_settings['tmdb_language']) ? 'selected' : '';
+    echo '<option value="' . htmlspecialchars($lang_code, ENT_QUOTES, 'UTF-8') . '" ' . $selected . '>' . htmlspecialchars($lang_name, ENT_QUOTES, 'UTF-8') . '</option>';
+}
+echo '
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="form-group">
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+    </div>
+</form>
+
+<script>
+    document.querySelectorAll(".main-tab").forEach(function (tab) {
+        tab.addEventListener("click", function () {
+            document.querySelectorAll(".tab-content").forEach(function (content) {
+                content.style.display = "none";
+            });
+            document.getElementById(tab.getAttribute("data-tab")).style.display = "block";
+        });
+    });
+</script>';
+
+echofooter();
+
+?>
+]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/tmdb_tags.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+return [
+    'en' => 'English',
+    'es' => 'Spanish',
+    'fr' => 'French',
+    'de' => 'German',
+    'it' => 'Italian',
+    'tr' => 'Turkish',
+    'ru' => 'Russian',
+    // Diğer diller...
+];
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+</dleplugin>
