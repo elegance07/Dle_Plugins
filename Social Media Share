@@ -7,6 +7,7 @@
 -----------------------------------------------------
  Author: elegance07
  Created: 2025-01-13
+kullanıış şekli : fullstory.tpl {include file="engine/modules/social_share_functions.php"}
 =====================================================
 */
 
