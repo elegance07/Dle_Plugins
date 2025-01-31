@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dleplugin>
+	<name>Tema Yukle</name>
+	<description>Tema ayarları bölümünde zip formatında tema yükleme</description>
+	<icon></icon>
+	<version>1.0.0</version>
+	<dleversion>15.0</dleversion>
+	<versioncompare>greater</versioncompare>
+	<upgradeurl></upgradeurl>
+	<filedelete>1</filedelete>
+	<needplugin></needplugin>
+	<mnotice>0</mnotice>
+	<mysqlinstall><![CDATA[]]></mysqlinstall>
+	<mysqlupgrade><![CDATA[]]></mysqlupgrade>
+	<mysqlenable><![CDATA[]]></mysqlenable>
+	<mysqldisable><![CDATA[]]></mysqldisable>
+	<mysqldelete><![CDATA[]]></mysqldelete>
+	<phpinstall><![CDATA[]]></phpinstall>
+	<phpupgrade><![CDATA[]]></phpupgrade>
+	<phpenable><![CDATA[]]></phpenable>
+	<phpdisable><![CDATA[]]></phpdisable>
+	<phpdelete><![CDATA[]]></phpdelete>
+	<notice><![CDATA[]]></notice>
+	<file name="engine/inc/templates.php">
+		<operation action="replace">
+			<searchcode><![CDATA[ <div class="form-group">
+			  <label class="control-label col-sm-2"></label>
+			  <div class="col-sm-10">
+				<a class="btn bg-teal btn-sm btn-raised position-left" href="?mod=templates&subaction=new&action=templates&user_hash={$dle_login_hash}">{$lang['opt_enewtepl']}</a>
+				{$show_delete_link}
+			  </div>
+			</div>]]></searchcode>
+			<replacecode><![CDATA[
+             <div class="form-group">
+              <label class="control-label col-sm-2"></label>
+              <div class="col-sm-10">
+                <div class="btn-group">
+                    <a class="btn bg-teal btn-sm btn-raised position-left" href="?mod=templates&subaction=new&action=templates&user_hash={$dle_login_hash}">{$lang['opt_enewtepl']}</a>
+                    <button type="button" class="btn bg-slate-600 btn-sm btn-raised" onclick="$('#uploadTemplate').modal('show');">
+                        <i class="fa fa-upload position-left"></i>Tema Yükle (.zip)
+                    </button>
+                    {$show_delete_link}
+                </div>
+              </div>
+            </div>
+
+            <!-- Tema Yükleme Modal -->
+            <div id="uploadTemplate" class="modal fade" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <form id="template-upload-form" method="post" enctype="multipart/form-data">
+                            <div class="modal-header">
+                                <button type="button" class="close" data-dismiss="modal">&times;</button>
+                                <h4 class="modal-title">
+                                    <i class="fa fa-upload position-left"></i>Tema Yükle
+                                </h4>
+                            </div>
+                            <div class="modal-body">
+                                <div class="form-group">
+                                    <div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+                                        <i class="fa fa-info-circle position-left"></i>
+                                        <span class="text-semibold">Bilgi!</span>
+                                        <ul class="mb-0 mt-5">
+                                            <li>Sadece .zip formatında tema dosyaları yükleyebilirsiniz.</li>
+                                            <li>Zip dosyası içinde tema_klasoru/main.tpl dosyası bulunmalıdır.</li>
+                                            <li>Tema adı Latin karakterler ve rakamlardan oluşmalıdır.</li>
+                                        </ul>
+                                    </div>
+                                    <label class="control-label">Tema Paketi (.zip):</label>
+                                    <div class="file-input">
+                                        <input type="file" name="template_file" class="form-control" accept=".zip" required>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-default" data-dismiss="modal">İptal</button>
+                                <button type="submit" id="upload-template-btn" class="btn bg-teal btn-sm btn-raised">
+                                    <i class="fa fa-upload position-left"></i>Yükle
+                                </button>
+                            </div>
+                            <input type="hidden" name="action" value="upload_template">
+                            <input type="hidden" name="user_hash" value="{$dle_login_hash}">
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <script>
+            $(function(){
+                $('#template-upload-form').on('submit', function(e){
+                    e.preventDefault();
+                    
+                    var formData = new FormData(this);
+                    
+                    $.ajax({
+                        url: 'engine/ajax/controller.php?mod=upload_template',
+                        type: 'POST',
+                        data: formData,
+                        processData: false,
+                        contentType: false,
+                        beforeSend: function() {
+                            $('#upload-template-btn').prop('disabled', true)
+                                .html('<i class="fa fa-spinner fa-spin"></i> Yükleniyor...');
+                        },
+                        success: function(response) {
+                            try {
+                                var data = JSON.parse(response);
+                                if(data.status == 'success') {
+                                    Growl.info({
+                                        title: '{$lang['p_info']}',
+                                        text: data.message
+                                    });
+                                    setTimeout(function(){
+                                        location.reload();
+                                    }, 2000);
+                                } else {
+                                    DLEalert(data.message || 'Bir hata oluştu!', '{$lang['p_error']}');
+                                }
+                            } catch(e) {
+                                DLEalert('{$lang['p_error']}', '{$lang['p_error']}');
+                            }
+                        },
+                        error: function() {
+                            DLEalert('{$lang['p_error']}', '{$lang['p_error']}');
+                        },
+                        complete: function() {
+                            $('#upload-template-btn').prop('disabled', false)
+                                .html('<i class="fa fa-upload position-left"></i>Yükle');
+                        }
+                    });
+                });
+            });
+            </script>
+]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/ajax/upload_template.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+/*
+=====================================================
+ DLE Template Upload
+-----------------------------------------------------
+ Version: 1.0.0
+ Author: elegance07
+ Date: 2025-01-17
+=====================================================
+*/
+if(!defined('DATALIFEENGINE')) {
+    header( "HTTP/1.1 403 Forbidden" );
+    header ( 'Location: ../../' );
+    die( "Hacking attempt!" );
+}
+
+if(!$is_logged || $member_id['user_group'] != 1) {
+    die(json_encode(['status' => 'error', 'message' => $lang['opt_denied']]));
+}
+
+// Önce eski temp klasörlerini temizle
+$templatesDir = ROOT_DIR . '/templates/';
+$tempPattern = $templatesDir . 'temp_*';
+foreach(glob($tempPattern) as $tempDir) {
+    if(is_dir($tempDir)) {
+        deleteDir($tempDir);
+    }
+}
+
+if(!isset($_FILES['template_file']) || $_FILES['template_file']['error'] !== UPLOAD_ERR_OK) {
+    die(json_encode(['status' => 'error', 'message' => 'Dosya yüklenemedi!']));
+}
+
+$file = $_FILES['template_file'];
+
+// ZIP kontrolü
+if(strtolower(pathinfo($file['name'], PATHINFO_EXTENSION)) !== 'zip') {
+    die(json_encode(['status' => 'error', 'message' => 'Sadece ZIP dosyaları yüklenebilir!']));
+}
+
+// ZIP içeriğini doğrudan kontrol et
+$zip = new ZipArchive;
+if($zip->open($file['tmp_name']) !== true) {
+    die(json_encode(['status' => 'error', 'message' => 'ZIP dosyası açılamadı!']));
+}
+
+// Ana tema klasörünü bul
+$themeName = '';
+for($i = 0; $i < $zip->numFiles; $i++) {
+    $filename = $zip->getNameIndex($i);
+    if(strpos($filename, 'main.tpl') !== false) {
+        $parts = explode('/', $filename);
+        if(count($parts) > 1) {
+            $themeName = $parts[0];
+            break;
+        }
+    }
+}
+
+if(empty($themeName)) {
+    $zip->close();
+    die(json_encode(['status' => 'error', 'message' => 'Geçerli tema yapısı bulunamadı! main.tpl dosyası gerekli.']));
+}
+
+// Tema adı kontrolü
+if(!preg_match('/^[a-zA-Z0-9_-]+$/', $themeName)) {
+    $zip->close();
+    die(json_encode(['status' => 'error', 'message' => 'Tema adı sadece Latin karakterler ve rakamlardan oluşmalıdır!']));
+}
+
+// Mevcut tema kontrolü
+$targetDir = ROOT_DIR . '/templates/' . $themeName;
+if(is_dir($targetDir)) {
+    $zip->close();
+    die(json_encode(['status' => 'error', 'message' => 'Bu tema zaten mevcut: ' . $themeName]));
+}
+
+// Doğrudan hedef klasöre çıkart
+$zip->extractTo($templatesDir);
+$zip->close();
+
+// İzinleri ayarla
+recursiveChmod($targetDir);
+
+// Log kaydı
+$db->query("INSERT INTO " . USERPREFIX . "_admin_logs (name, date, ip, action, extras) values ('".$db->safesql($member_id['name'])."', '{$_TIME}', '{$_IP}', '67', '".$db->safesql($themeName)."')");
+
+die(json_encode([
+    'status' => 'success',
+    'message' => 'Tema başarıyla yüklendi: ' . $themeName
+]));
+
+function recursiveChmod($path) {
+    if(!is_dir($path)) return;
+    chmod($path, 0755);
+    
+    $objects = scandir($path);
+    foreach($objects as $object) {
+        if($object != "." && $object != "..") {
+            $fullPath = $path . "/" . $object;
+            if(is_dir($fullPath)) {
+                chmod($fullPath, 0755);
+                recursiveChmod($fullPath);
+            } else {
+                chmod($fullPath, 0644);
+            }
+        }
+    }
+}
+
+function deleteDir($dir) {
+    if(!is_dir($dir)) return;
+    $objects = scandir($dir);
+    foreach($objects as $object) {
+        if($object != "." && $object != "..") {
+            $fullPath = $dir . "/" . $object;
+            if(is_dir($fullPath)) {
+                deleteDir($fullPath);
+            } else {
+                unlink($fullPath);
+            }
+        }
+    }
+    rmdir($dir);
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+</dleplugin>
