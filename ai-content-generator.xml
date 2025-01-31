@@ -1,0 +1,776 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dleplugin>
+	<name>AI Content Generator</name>
+	<description>OpenAI API ile Yapay Zeka İçerik Üretme Eklentisi</description>
+	<icon>engine/skins/images/ai_content/ai_icon.png</icon>
+	<version>1.0.1</version>
+	<dleversion>13</dleversion>
+	<versioncompare>greater</versioncompare>
+	<upgradeurl></upgradeurl>
+	<filedelete>0</filedelete>
+	<needplugin></needplugin>
+	<mnotice>0</mnotice>
+	<mysqlinstall><![CDATA[REPLACE INTO {prefix}_admin_sections (name, title, descr, icon, allow_groups) 
+    VALUES ('ai_content', 'AI Content', 'OpenAI ile İçerik Üretici', 'ai_icon.png', '1');
+
+    CREATE TABLE IF NOT EXISTS `{prefix}_ai_config` (
+        `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+        `value` text COLLATE utf8mb4_unicode_ci NOT NULL,
+        `is_encrypted` tinyint(1) NOT NULL DEFAULT '0'
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+    CREATE TABLE IF NOT EXISTS `{prefix}_ai_logs` (
+        `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        `user_id` int(11) NOT NULL,
+        `action` varchar(50) NOT NULL,
+        `prompt` text,
+        `response` text,
+        `error` text,
+        `ip` varchar(45),
+        `date` datetime DEFAULT CURRENT_TIMESTAMP,
+        KEY `user_id` (`user_id`),
+        KEY `date` (`date`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+    INSERT INTO `{prefix}_ai_config` (`name`, `value`, `is_encrypted`) VALUES
+    ('api_key', '', 1),
+    ('model', 'gpt-3.5-turbo', 0),
+    ('max_tokens', '1000', 0),
+    ('temperature', '0.7', 0),
+    ('encryption_key', MD5(CONCAT(RAND(), NOW())), 1);]]></mysqlinstall>
+	<mysqlupgrade><![CDATA[ALTER TABLE `{prefix}_ai_config` ADD COLUMN IF NOT EXISTS `is_encrypted` tinyint(1) NOT NULL DEFAULT '0';
+    UPDATE `{prefix}_ai_config` SET `is_encrypted` = 1 WHERE `name` IN ('api_key', 'encryption_key');
+
+    CREATE TABLE IF NOT EXISTS `{prefix}_ai_logs` (
+        `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        `user_id` int(11) NOT NULL,
+        `action` varchar(50) NOT NULL,
+        `prompt` text,
+        `response` text,
+        `error` text,
+        `ip` varchar(45),
+        `date` datetime DEFAULT CURRENT_TIMESTAMP,
+        KEY `user_id` (`user_id`),
+        KEY `date` (`date`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;]]></mysqlupgrade>
+	<mysqlenable><![CDATA[REPLACE INTO {prefix}_admin_sections (name, title, descr, icon, allow_groups) 
+    VALUES ('ai_content', 'AI Content', 'OpenAI ile İçerik Üretici', 'ai_icon.png', '1');]]></mysqlenable>
+	<mysqldisable><![CDATA[DELETE FROM {prefix}_admin_sections WHERE name = 'ai_content';]]></mysqldisable>
+	<mysqldelete><![CDATA[DELETE FROM {prefix}_admin_sections WHERE name = 'ai_content';
+    DROP TABLE IF EXISTS `{prefix}_ai_config`;
+    DROP TABLE IF EXISTS `{prefix}_ai_logs`;]]></mysqldelete>
+	<phpinstall><![CDATA[]]></phpinstall>
+	<phpupgrade><![CDATA[]]></phpupgrade>
+	<phpenable><![CDATA[]]></phpenable>
+	<phpdisable><![CDATA[]]></phpdisable>
+	<phpdelete><![CDATA[]]></phpdelete>
+	<notice><![CDATA[AI Content Generator kurulumu tamamlandı!
+    
+    🔥 Yeni Özellikler:
+    ✓ API anahtarı şifreleme
+    ✓ Detaylı log sistemi
+    ✓ Gelişmiş hata yönetimi
+    ✓ Kullanıcı dostu arayüz
+    ✓ Gerçek zamanlı durum bildirimleri
+    
+    Kullanım için yapmanız gerekenler:
+    1. Admin panelinden AI Content menüsüne gidin
+    2. OpenAI API anahtarınızı girin
+    3. Model ve diğer ayarları yapılandırın
+    4. Haber ekleme sayfasında AI Content bölümünü kullanmaya başlayın
+    
+    ⚠️ Önemli Notlar:
+    - API kullanımı ücretlidir
+    - API anahtarınız güvenli bir şekilde şifrelenir
+    - Tüm işlemler loglanır
+    - Yalnızca yetkili kullanıcılar içerik üretebilir
+    
+    🔍 Hata Durumunda:
+    - Log kayıtlarını kontrol edin
+    - API anahtarınızın doğru olduğundan emin olun
+    - Tarayıcı konsolunda hata mesajlarını inceleyin
+    
+    Oluşturan: elegance07
+    Tarih: 2025-01-31 12:11:17]]></notice>
+	<file name="engine/modules/ai_content.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) {
+    die("Hacking attempt!");
+}
+
+function encrypt_value($string, $encryption_key) {
+    return openssl_encrypt($string, "AES-256-CBC", $encryption_key, 0, substr(md5($encryption_key), 0, 16));
+}
+
+function decrypt_value($string, $encryption_key) {
+    return openssl_decrypt($string, "AES-256-CBC", $encryption_key, 0, substr(md5($encryption_key), 0, 16));
+}
+
+function ai_log($action, $data = array()) {
+    global $db, $member_id;
+    
+    $log = array(
+        'user_id' => intval($member_id['user_id']),
+        'action' => $db->safesql($action),
+        'prompt' => isset($data['prompt']) ? $db->safesql($data['prompt']) : '',
+        'response' => isset($data['response']) ? $db->safesql(json_encode($data['response'])) : '',
+        'error' => isset($data['error']) ? $db->safesql($data['error']) : '',
+        'ip' => get_ip()
+    );
+    
+    $db->query("INSERT INTO " . PREFIX . "_ai_logs 
+        (user_id, action, prompt, response, error, ip) 
+        VALUES 
+        ('{$log['user_id']}', '{$log['action']}', '{$log['prompt']}', '{$log['response']}', '{$log['error']}', '{$log['ip']}')");
+        
+    return $db->insert_id();
+}
+
+function get_ai_config() {
+    global $db;
+    
+    $config = array(
+        'api_key' => '',
+        'model' => 'gpt-3.5-turbo',
+        'max_tokens' => 1000,
+        'temperature' => 0.7,
+        'encryption_key' => ''
+    );
+    
+    $result = $db->query("SELECT name, value, is_encrypted FROM " . PREFIX . "_ai_config");
+    if ($result) {
+        $encryption_key = '';
+        while ($row = $db->get_row($result)) {
+            if ($row['name'] === 'encryption_key') {
+                $encryption_key = $row['value'];
+                continue;
+            }
+            
+            $value = $row['value'];
+            if ($row['is_encrypted'] && !empty($encryption_key)) {
+                $value = decrypt_value($value, $encryption_key);
+            }
+            
+            $config[$row['name']] = $value;
+        }
+    }
+    
+    return $config;
+}
+
+function save_ai_config($config) {
+    global $db;
+    
+    $result = $db->query("SELECT value FROM " . PREFIX . "_ai_config WHERE name = 'encryption_key'");
+    $encryption_key = $db->get_row($result)['value'];
+    
+    foreach ($config as $name => $value) {
+        $is_encrypted = ($name === 'api_key') ? 1 : 0;
+        if ($is_encrypted) {
+            $value = encrypt_value($value, $encryption_key);
+        }
+        
+        $db->query("REPLACE INTO " . PREFIX . "_ai_config (name, value, is_encrypted) VALUES 
+            ('" . $db->safesql($name) . "', 
+             '" . $db->safesql($value) . "',
+             '" . $is_encrypted . "')");
+    }
+    return true;
+}
+
+class AIContentGenerator {
+    private $apiKey;
+    private $model;
+    private $maxTokens;
+    private $temperature;
+    
+    public function __construct($config) {
+        if (empty($config['api_key'])) {
+            throw new Exception('API anahtarı bulunamadı. Admin panelinden ayarlayın.');
+        }
+        
+        $this->apiKey = $config['api_key'];
+        $this->model = $config['model'];
+        $this->maxTokens = (int)$config['max_tokens'];
+        $this->temperature = (float)$config['temperature'];
+    }
+    
+    public function generateContent($prompt) {
+        $url = 'https://api.openai.com/v1/chat/completions';
+        
+        $headers = array(
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $this->apiKey
+        );
+        
+        $data = array(
+            'model' => $this->model,
+            'messages' => array(
+                array(
+                    'role' => 'user',
+                    'content' => $prompt
+                )
+            ),
+            'max_tokens' => $this->maxTokens,
+            'temperature' => $this->temperature
+        );
+        
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($httpCode === 200) {
+            $result = json_decode($response, true);
+            return array(
+                'success' => true,
+                'content' => $result['choices'][0]['message']['content']
+            );
+        } else {
+            return array(
+                'error' => 'API Hatası: ' . $httpCode,
+                'details' => $response
+            );
+        }
+    }
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/ajax/ai_generate.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) {
+    die("Hacking attempt!");
+}
+
+if(!$is_logged) {
+    die(json_encode(array('error' => 'Yetkilendirme gerekli')));
+}
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    die(json_encode(array('error' => 'Geçersiz istek türü')));
+}
+
+if (!isset($_POST['user_hash']) || $_POST['user_hash'] !== $dle_login_hash) {
+    die(json_encode(array('error' => 'Geçersiz güvenlik anahtarı')));
+}
+
+include_once DLEPlugins::Check(ENGINE_DIR . '/modules/ai_content.php');
+
+try {
+    $config = get_ai_config();
+    
+    // API anahtarı kontrolü
+    if(empty($config['api_key'])) {
+        ai_log('error', array('error' => 'API anahtarı bulunamadı'));
+        die(json_encode(array('error' => 'API anahtarı bulunamadı. Admin panelinden ayarlayın.')));
+    }
+    
+    $prompt = trim($_POST['prompt'] ?? '');
+    if (empty($prompt)) {
+        ai_log('error', array('error' => 'Boş prompt'));
+        die(json_encode(array('error' => 'Prompt boş olamaz')));
+    }
+
+    $ai = new AIContentGenerator($config);
+    
+    // İstek loglanıyor
+    ai_log('request', array('prompt' => $prompt));
+    
+    $result = $ai->generateContent($prompt);
+    
+    // Sonuç loglanıyor
+    ai_log('response', array(
+        'prompt' => $prompt,
+        'response' => $result
+    ));
+    
+    echo json_encode($result);
+    
+} catch (Exception $e) {
+    // Hata loglanıyor
+    ai_log('error', array(
+        'prompt' => $prompt ?? '',
+        'error' => $e->getMessage()
+    ));
+    
+    die(json_encode(array('error' => $e->getMessage())));
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/ai_content.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if (!defined('DATALIFEENGINE') || !defined('LOGGED_IN')) {
+    die("Hacking attempt!");
+}
+
+if ($member_id['user_group'] != 1) {
+    msg("error", $lang['index_denied'], $lang['index_denied']);
+}
+
+include_once DLEPlugins::Check(ENGINE_DIR . '/modules/ai_content.php');
+
+// Log sayfası
+if(isset($_GET['logs'])) {
+    echoheader("AI Content Generator", "Log Kayıtları");
+    
+    $logs = $db->query("SELECT l.*, u.name as username 
+        FROM " . PREFIX . "_ai_logs l 
+        LEFT JOIN " . PREFIX . "_users u ON u.user_id = l.user_id 
+        ORDER BY l.date DESC LIMIT 100");
+    
+    echo <<<HTML
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <div class="title-gradient">Son AI İstekleri</div>
+        </div>
+        <div class="panel-body">
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Tarih</th>
+                            <th>Kullanıcı</th>
+                            <th>İşlem</th>
+                            <th>Prompt</th>
+                            <th>Sonuç/Hata</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+    HTML;
+    
+    while($log = $db->get_row($logs)) {
+        $date = date("Y-m-d H:i:s", strtotime($log['date']));
+        echo "<tr>
+            <td>{$date}</td>
+            <td>{$log['username']}</td>
+            <td>{$log['action']}</td>
+            <td>" . htmlspecialchars(substr($log['prompt'], 0, 100)) . (strlen($log['prompt']) > 100 ? '...' : '') . "</td>
+            <td>" . (empty($log['error']) ? '<span class="text-success">Başarılı</span>' : '<span class="text-danger">' . htmlspecialchars($log['error']) . '</span>') . "</td>
+        </tr>";
+    }
+    
+    echo <<<HTML
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="panel-footer">
+        <a href="?mod=ai_content" class="btn btn-default">Ayarlara Dön</a>
+    </div>
+    HTML;
+    
+    echofooter();
+    return;
+}
+
+// Ayarları kaydet
+if (isset($_POST['action']) && $_POST['action'] == 'save') {
+    if (!isset($_REQUEST['user_hash']) || !$_REQUEST['user_hash'] || $_REQUEST['user_hash'] != $dle_login_hash) {
+        msg("error", "Hata", "Geçersiz güvenlik doğrulaması!");
+    }
+    
+    $new_config = array(
+        'api_key' => trim($_POST['api_key']),
+        'model' => trim($_POST['model']),
+        'max_tokens' => (int)$_POST['max_tokens'],
+        'temperature' => (float)$_POST['temperature']
+    );
+    
+    if (save_ai_config($new_config)) {
+        msg("success", "Başarılı", "Ayarlar kaydedildi!", "?mod=ai_content");
+    } else {
+        msg("error", "Hata", "Ayarlar kaydedilemedi!", "?mod=ai_content");
+    }
+}
+
+$config = get_ai_config();
+
+echoheader("AI Content Generator", "OpenAI Ayarları");
+
+$selected_35 = ($config['model'] === 'gpt-3.5-turbo') ? ' selected' : '';
+$selected_4 = ($config['model'] === 'gpt-4') ? ' selected' : '';
+
+echo <<<HTML
+<div class="navbar navbar-default navbar-fixed-top">
+    <div class="container-fluid">
+        <div class="navbar-header">
+            <a class="navbar-brand" href="?mod=ai_content">AI Content Generator</a>
+        </div>
+        <ul class="nav navbar-nav navbar-right">
+            <li><a href="?mod=ai_content&logs"><i class="fa fa-history"></i> Log Kayıtları</a></li>
+        </ul>
+    </div>
+</div>
+
+<form method="POST" action="" class="systemsettings">
+    <input type="hidden" name="action" value="save">
+    <input type="hidden" name="user_hash" value="{$dle_login_hash}">
+    
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <div class="title-gradient">OpenAI API Ayarları</div>
+        </div>
+        <div class="panel-body">
+            <div class="alert alert-info">
+                <i class="fa fa-info-circle"></i> API anahtarınızı güvenli bir şekilde saklayın. Şifrelenmiş olarak kaydedilecektir.
+            </div>
+            
+            <div class="form-group">
+                <label>API Key: <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" name="api_key" value="{$config['api_key']}" autocomplete="off" required>
+                <small class="text-muted">API anahtarınızı <a href="https://platform.openai.com/account/api-keys" target="_blank">OpenAI</a> üzerinden alabilirsiniz.</small>
+            </div>
+            
+            <div class="form-group">
+                <label>Model:</label>
+                <select name="model" class="form-control">
+                    <option value="gpt-3.5-turbo"{$selected_35}>GPT-3.5 Turbo (Hızlı ve Ekonomik)</option>
+                    <option value="gpt-4"{$selected_4}>GPT-4 (Daha Kaliteli, Daha Pahalı)</option>
+                </select>
+                <small class="text-muted">GPT-4 daha kaliteli sonuçlar üretir ancak maliyeti daha yüksektir.</small>
+            </div>
+            
+            <div class="form-group">
+                <label>Maximum Tokens:</label>
+                <input type="number" class="form-control" name="max_tokens" value="{$config['max_tokens']}" min="1" max="4000">
+                <small class="text-muted">1 ile 4000 arasında bir değer girin. Daha yüksek değerler daha uzun içerik üretir.</small>
+            </div>
+            
+            <div class="form-group">
+                <label>Temperature (0.0 - 1.0):</label>
+                <input type="number" step="0.1" min="0" max="1" class="form-control" name="temperature" value="{$config['temperature']}">
+                <small class="text-muted">0 = tutarlı, 1 = yaratıcı çıktılar. Düşük değerler daha tutarlı sonuçlar üretir.</small>
+            </div>
+        </div>
+        
+        <div class="panel-footer">
+            <button type="submit" class="btn btn-primary"><i class="fa fa-floppy-o"></i> Ayarları Kaydet</button>
+            <a href="?mod=ai_content&logs" class="btn btn-info pull-right"><i class="fa fa-history"></i> Log Kayıtları</a>
+        </div>
+    </div>
+</form>
+
+<script type="text/javascript">
+$(function(){
+    $('.systemsettings').submit(function() {
+        if($.trim($('input[name="api_key"]').val()) === '') {
+            DLEalert('Lütfen API anahtarınızı girin.', 'Hata');
+            return false;
+        }
+        return true;
+    });
+});
+</script>
+HTML;
+
+echofooter();
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/addnews.php">
+		<operation action="after">
+			<searchcode><![CDATA[<div class="form-group">
+							  <label class="control-label col-sm-2">{$lang['addnews_cat']}</label>
+							  <div class="col-sm-10">
+								<select data-placeholder="{$lang['addnews_cat_sel']}" title="{$lang['addnews_cat_sel']}" name="category[]" id="category" onchange="onCategoryChange(this)" $category_multiple style="width:100%;max-width:350px;">{$categories_list}</select><input type="hidden" name="category_custom_sort" id="category_custom_sort" value="">
+							  </div>
+							</div>]]></searchcode>
+			<replacecode><![CDATA[
+<div class="form-group">
+    <label class="control-label col-sm-2">AI Content:</label>
+    <div class="col-sm-10">
+        <div class="alert alert-info" id="ai_status" style="display:none;">
+            <i class="fa fa-spinner fa-spin"></i> <span id="ai_status_text">İşleniyor...</span>
+        </div>
+        <textarea class="form-control" id="ai_prompt" rows="3" placeholder="İçerik üretmek için prompt girin..."></textarea>
+        <div class="mt-10">
+            <button type="button" class="btn bg-teal btn-sm" id="generateContent">
+                <i class="fa fa-magic"></i> İçerik Üret
+            </button>
+            <button type="button" class="btn btn-info btn-sm" id="improveContent">
+                <i class="fa fa-refresh"></i> İçeriği İyileştir
+            </button>
+            <button type="button" class="btn btn-warning btn-sm" id="translateContent">
+                <i class="fa fa-language"></i> Çeviri
+            </button>
+        </div>
+        <small class="text-muted mt-5">
+            <i class="fa fa-info-circle"></i> OpenAI API kullanılarak içerik üretilir. Her istek API kredisi kullanır.
+        </small>
+    </div>
+</div>
+
+<script type="text/javascript">
+$(function(){
+    function updateStatus(text, type = 'info') {
+        $('#ai_status').attr('class', 'alert alert-' + type).show();
+        $('#ai_status_text').text(text);
+    }
+    
+    function handleAIRequest(prompt, statusText) {
+        updateStatus(statusText || 'İçerik üretiliyor...');
+        
+        console.log('AI İstek:', {
+            prompt: prompt,
+            url: 'engine/ajax/controller.php?mod=ai_generate'
+        });
+        
+        return $.ajax({
+            url: 'engine/ajax/controller.php?mod=ai_generate',
+            method: 'POST',
+            data: {
+                prompt: prompt,
+                user_hash: dle_login_hash
+            },
+            dataType: 'json'
+        }).always(function() {
+            $('#ai_status').hide();
+        });
+    }
+
+    $('#generateContent').click(function(e){
+        e.preventDefault();
+        
+        var prompt = $('#ai_prompt').val();
+        if(!prompt) {
+            DLEalert('Lütfen bir prompt girin.', 'Hata');
+            return;
+        }
+        
+        handleAIRequest(prompt, 'İçerik üretiliyor...')
+            .done(function(response) {
+                if(response.error) {
+                    updateStatus(response.error, 'danger');
+                    console.error('AI Hata:', response.error);
+                } else if(response.content) {
+                    $('#short_story').val(response.content);
+                    updateStatus('İçerik başarıyla üretildi!', 'success');
+                    setTimeout(function() {
+                        $('#ai_status').fadeOut();
+                    }, 3000);
+                }
+            })
+            .fail(function(jqXHR, textStatus, errorThrown) {
+                console.error('AJAX Hata:', {
+                    status: jqXHR.status,
+                    statusText: jqXHR.statusText,
+                    responseText: jqXHR.responseText
+                });
+                updateStatus('İstek sırasında bir hata oluştu: ' + textStatus, 'danger');
+            });
+    });
+
+    $('#improveContent').click(function(){
+        var content = $('#short_story').val();
+        if(!content) {
+            DLEalert('İyileştirilecek içerik bulunamadı.', 'Hata');
+            return;
+        }
+        
+        // Çok satırlı string yerine tek satır kullanıyoruz
+        handleAIRequest("Aşağıdaki metni daha profesyonel ve SEO dostu bir şekilde yeniden yaz: " + content, 'İçerik iyileştiriliyor...')
+            .done(function(response) {
+                if(response.error) {
+                    updateStatus(response.error, 'danger');
+                } else if(response.content) {
+                    $('#short_story').val(response.content);
+                    updateStatus('İçerik başarıyla iyileştirildi!', 'success');
+                    setTimeout(function() {
+                        $('#ai_status').fadeOut();
+                    }, 3000);
+                }
+            })
+            .fail(function() {
+                updateStatus('İstek sırasında bir hata oluştu.', 'danger');
+            });
+    });
+
+    $('#translateContent').click(function(){
+        var content = $('#short_story').val();
+        if(!content) {
+            DLEalert('Çevrilecek içerik bulunamadı.', 'Hata');
+            return;
+        }
+        
+        // Çok satırlı string yerine tek satır kullanıyoruz
+        handleAIRequest("Aşağıdaki metni Türkçeye çevir: " + content, 'İçerik çevriliyor...')
+            .done(function(response) {
+                if(response.error) {
+                    updateStatus(response.error, 'danger');
+                } else if(response.content) {
+                    $('#short_story').val(response.content);
+                    updateStatus('İçerik başarıyla çevrildi!', 'success');
+                    setTimeout(function() {
+                        $('#ai_status').fadeOut();
+                    }, 3000);
+                }
+            })
+            .fail(function() {
+                updateStatus('İstek sırasında bir hata oluştu.', 'danger');
+            });
+    });
+});
+</script>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/editnews.php">
+		<operation action="before">
+			<searchcode><![CDATA[<div class="form-group editor-group">
+							  <label class="control-label col-md-2">{$lang['addnews_short']}</label>
+							  <div class="col-md-10">]]></searchcode>
+			<replacecode><![CDATA[
+<div class="form-group">
+    <label class="control-label col-sm-2">AI Content:</label>
+    <div class="col-sm-10">
+        <div class="alert alert-info" id="ai_status" style="display:none;">
+            <i class="fa fa-spinner fa-spin"></i> <span id="ai_status_text">İşleniyor...</span>
+        </div>
+        <textarea class="form-control" id="ai_prompt" rows="3" placeholder="İçerik üretmek için prompt girin..."></textarea>
+        <div class="mt-10">
+            <button type="button" class="btn bg-teal btn-sm" id="generateContent">
+                <i class="fa fa-magic"></i> İçerik Üret
+            </button>
+            <button type="button" class="btn btn-info btn-sm" id="improveContent">
+                <i class="fa fa-refresh"></i> İçeriği İyileştir
+            </button>
+            <button type="button" class="btn btn-warning btn-sm" id="translateContent">
+                <i class="fa fa-language"></i> Çeviri
+            </button>
+        </div>
+        <small class="text-muted mt-5">
+            <i class="fa fa-info-circle"></i> OpenAI API kullanılarak içerik üretilir. Her istek API kredisi kullanır.
+        </small>
+    </div>
+</div>
+
+<script type="text/javascript">
+$(function(){
+    function updateStatus(text, type = 'info') {
+        $('#ai_status').attr('class', 'alert alert-' + type).show();
+        $('#ai_status_text').text(text);
+    }
+    
+    function handleAIRequest(prompt, statusText) {
+        updateStatus(statusText || 'İçerik üretiliyor...');
+        
+        console.log('AI İstek:', {
+            prompt: prompt,
+            url: 'engine/ajax/controller.php?mod=ai_generate'
+        });
+        
+        return $.ajax({
+            url: 'engine/ajax/controller.php?mod=ai_generate',
+            method: 'POST',
+            data: {
+                prompt: prompt,
+                user_hash: dle_login_hash
+            },
+            dataType: 'json'
+        }).always(function() {
+            $('#ai_status').hide();
+        });
+    }
+
+    $('#generateContent').click(function(e){
+        e.preventDefault();
+        
+        var prompt = $('#ai_prompt').val();
+        if(!prompt) {
+            DLEalert('Lütfen bir prompt girin.', 'Hata');
+            return;
+        }
+        
+        handleAIRequest(prompt, 'İçerik üretiliyor...')
+            .done(function(response) {
+                if(response.error) {
+                    updateStatus(response.error, 'danger');
+                    console.error('AI Hata:', response.error);
+                } else if(response.content) {
+                    $('#short_story').val(response.content);
+                    updateStatus('İçerik başarıyla üretildi!', 'success');
+                    setTimeout(function() {
+                        $('#ai_status').fadeOut();
+                    }, 3000);
+                }
+            })
+            .fail(function(jqXHR, textStatus, errorThrown) {
+                console.error('AJAX Hata:', {
+                    status: jqXHR.status,
+                    statusText: jqXHR.statusText,
+                    responseText: jqXHR.responseText
+                });
+                updateStatus('İstek sırasında bir hata oluştu: ' + textStatus, 'danger');
+            });
+    });
+
+    $('#improveContent').click(function(){
+        var content = $('#short_story').val();
+        if(!content) {
+            DLEalert('İyileştirilecek içerik bulunamadı.', 'Hata');
+            return;
+        }
+        
+        // Çok satırlı string yerine tek satır kullanıyoruz
+        handleAIRequest("Aşağıdaki metni daha profesyonel ve SEO dostu bir şekilde yeniden yaz: " + content, 'İçerik iyileştiriliyor...')
+            .done(function(response) {
+                if(response.error) {
+                    updateStatus(response.error, 'danger');
+                } else if(response.content) {
+                    $('#short_story').val(response.content);
+                    updateStatus('İçerik başarıyla iyileştirildi!', 'success');
+                    setTimeout(function() {
+                        $('#ai_status').fadeOut();
+                    }, 3000);
+                }
+            })
+            .fail(function() {
+                updateStatus('İstek sırasında bir hata oluştu.', 'danger');
+            });
+    });
+
+    $('#translateContent').click(function(){
+        var content = $('#short_story').val();
+        if(!content) {
+            DLEalert('Çevrilecek içerik bulunamadı.', 'Hata');
+            return;
+        }
+        
+        // Çok satırlı string yerine tek satır kullanıyoruz
+        handleAIRequest("Aşağıdaki metni Türkçeye çevir: " + content, 'İçerik çevriliyor...')
+            .done(function(response) {
+                if(response.error) {
+                    updateStatus(response.error, 'danger');
+                } else if(response.content) {
+                    $('#short_story').val(response.content);
+                    updateStatus('İçerik başarıyla çevrildi!', 'success');
+                    setTimeout(function() {
+                        $('#ai_status').fadeOut();
+                    }, 3000);
+                }
+            })
+            .fail(function() {
+                updateStatus('İstek sırasında bir hata oluştu.', 'danger');
+            });
+    });
+});
+</script>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+</dleplugin>
