@@ -1,0 +1,555 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dleplugin>
+	<name>DBMovies Film/Dizi İçe Aktarıcı</name>
+	<description>TMDb API kullanarak film ve dizi içeriklerini DLE&#039;ye aktarma eklentisi</description>
+	<icon></icon>
+	<version>1.0.0</version>
+	<dleversion>15.3</dleversion>
+	<versioncompare>greater</versioncompare>
+	<upgradeurl></upgradeurl>
+	<filedelete>0</filedelete>
+	<needplugin></needplugin>
+	<mnotice>0</mnotice>
+	<mysqlinstall><![CDATA[CREATE TABLE IF NOT EXISTS `{prefix}_dbmovies_config` (
+    `id` int(11) NOT NULL AUTO_INCREMENT,
+    `api_key` varchar(255) NOT NULL DEFAULT '',
+    `default_language` varchar(10) NOT NULL DEFAULT 'tr',
+    `movie_category` int(11) NOT NULL DEFAULT 0,
+    `tv_category` int(11) NOT NULL DEFAULT 0,
+    `last_updated` datetime DEFAULT NULL,
+    `updated_by` varchar(255) DEFAULT NULL,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO `{prefix}_dbmovies_config` 
+    (`api_key`, `default_language`, `movie_category`, `tv_category`, `last_updated`, `updated_by`) 
+VALUES 
+    ('', 'tr', 0, 0, NOW(), 'elegance07');
+
+INSERT INTO `{prefix}_admin_sections` 
+    (`name`, `title`, `descr`, `icon`, `allow_groups`) 
+VALUES 
+    ('dbmovies', 'Film & Dizi Yöneticisi', 'TMDb API ile film ve dizi içe aktarma sistemi', 'fa-film', '1');]]></mysqlinstall>
+	<mysqlupgrade><![CDATA[]]></mysqlupgrade>
+	<mysqlenable><![CDATA[]]></mysqlenable>
+	<mysqldisable><![CDATA[]]></mysqldisable>
+	<mysqldelete><![CDATA[DROP TABLE IF EXISTS `{prefix}_dbmovies_config`;
+        DELETE FROM `{prefix}_admin_sections` WHERE name = 'dbmovies';]]></mysqldelete>
+	<phpinstall><![CDATA[]]></phpinstall>
+	<phpupgrade><![CDATA[]]></phpupgrade>
+	<phpenable><![CDATA[]]></phpenable>
+	<phpdisable><![CDATA[]]></phpdisable>
+	<phpdelete><![CDATA[]]></phpdelete>
+	<notice><![CDATA[]]></notice>
+	<file name="engine/ajax/movies.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+if (!defined('DATALIFEENGINE')) {
+    header("HTTP/1.1 403 Forbidden");
+    header('Location: ../../');
+    die("Hacking attempt!");
+}
+
+// Ayarları yükle
+include_once DLEPlugins::Check(ENGINE_DIR . '/data/dbmovies.config.php');
+
+// Kullanıcı yetkilerini kontrol et
+if ($member_id['user_group'] != 1) {
+    die(json_encode(['status' => 'error', 'message' => $lang['index_denied']]));
+}
+
+// Kullanıcı hash kontrolü
+if (!isset($_REQUEST['user_hash']) || $_REQUEST['user_hash'] != $dle_login_hash) {
+    die(json_encode(['status' => 'error', 'message' => 'Invalid user hash!']));
+}
+
+// TMDb API fonksiyonları
+function tmdb_request($endpoint, $params = []) {
+    global $tmdb_config;
+
+    // API anahtarını kontrol et
+    if (empty($tmdb_config['api_key'])) {
+        die(json_encode(['status' => 'error', 'message' => 'API anahtarı bulunamadı.']));
+    }
+
+    $api_key = $tmdb_config['api_key'];
+    $base_url = 'https://api.themoviedb.org/3';
+    $params['api_key'] = $api_key;
+
+    $url = $base_url . $endpoint . '?' . http_build_query($params);
+
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    curl_close($ch);
+
+    return json_decode($response, true);
+}
+
+// Gelen aksiyonu al
+$action = $_POST['action'] ?? '';
+
+switch ($action) {
+    case 'search':
+        if (!isset($_POST['query']) || !isset($_POST['type'])) {
+            die(json_encode([
+                'status' => 'error', 
+                'message' => 'Eksik parametreler gönderildi.'
+            ]));
+        }
+
+        $query = trim($_POST['query']);
+        $type = $_POST['type'];
+
+        if ($type != 'movie' && $type != 'tv') {
+            die(json_encode([
+                'status' => 'error', 
+                'message' => 'Geçersiz içerik türü'
+            ]));
+        }
+
+        // TMDb API'sine istek yap
+        $results = tmdb_request('/search/' . $type, [
+            'query' => $query,
+            'language' => $tmdb_config['default_language']
+        ]);
+
+        if (isset($results['results'])) {
+            die(json_encode([
+                'status' => 'success', 
+                'results' => $results['results']
+            ]));
+        } else {
+            die(json_encode([
+                'status' => 'error', 
+                'message' => 'API hatası: ' . json_encode($results)
+            ]));
+        }
+        break;
+
+    default:
+        die(json_encode(['status' => 'error', 'message' => 'Geçersiz işlem']));
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/dbmovies.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+@error_reporting(E_ALL ^ E_WARNING ^ E_DEPRECATED ^ E_NOTICE);
+@ini_set('error_reporting', E_ALL ^ E_WARNING ^ E_DEPRECATED ^ E_NOTICE);
+@ini_set('display_errors', 0);
+@ini_set('log_errors', 0);  
+  
+if (!defined('DATALIFEENGINE')) {
+    die("Hacking attempt!");
+}
+
+// Ayarları yükle
+include_once DLEPlugins::Check(ENGINE_DIR . '/data/dbmovies.config.php');
+
+// Admin paneli başlık kısmı
+echoheader("movies", "Film Yönetimi");
+
+// TMDb ayarlarını veritabanından al
+$tmdb_config = $db->super_query("SELECT * FROM " . PREFIX . "_dbmovies_config WHERE id = 1");
+
+// Eğer ayarlar boşsa varsayılan değerler atanır
+if (!$tmdb_config) {
+    $tmdb_config = [
+        'api_key' => '',
+        'default_language' => 'tr-TR',
+        'movie_category' => 0,
+        'tv_category' => 0
+    ];
+}
+
+// Dil seçeneği için selected durumunu belirle
+$selected_tr = ($tmdb_config['default_language'] == 'tr-TR') ? 'selected' : '';
+$selected_en = ($tmdb_config['default_language'] == 'en-US') ? 'selected' : '';
+?>
+
+<div class="panel panel-default">
+    <div class="panel-heading">
+        <ul class="nav nav-tabs nav-tabs-solid">
+            <li class="active"><a href="#tabhome" data-toggle="tab"><i class="fa fa-home position-left"></i> Film Ekle</a></li>
+            <li><a href="#tabfiles" data-toggle="tab"><i class="fa fa-file-code-o position-left"></i> Film Listesi</a></li>
+            <li><a href="#tabdiscover" data-toggle="tab"><i class="fa fa-database position-left"></i> Discover</a></li>
+            <li><a href="#tabsettings" data-toggle="tab"><i class="fa fa-code position-left"></i> Ayarlar</a></li>
+        </ul>
+        <div class="heading-elements">
+            <ul class="icons-list">
+                <li><a href="#" class="panel-fullscreen"><i class="fa fa-expand"></i></a></li>
+            </ul>
+        </div>
+    </div>
+    <div class="panel-tab-content tab-content">
+        <div class="tab-pane active" id="tabhome">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h6 class="panel-title">Film Ara ve Ekle</h6>
+                </div>
+                <div class="panel-body">
+                    <div class="form-group">
+    <input type="text" class="form-control" id="movie_search" placeholder="Film veya dizi adı girin...">
+</div>
+<div class="form-group">
+    <select class="form-control" id="content_type">
+        <option value="movie">Film</option>
+        <option value="tv">Dizi</option>
+    </select>
+</div>
+<button class="btn btn-primary" onclick="searchMovies()">Ara</button>
+<div id="search_results" class="movie-grid"></div>
+                </div>
+            </div>
+        </div>
+        <div class="tab-pane" id="tabfiles">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h6 class="panel-title">Film Listesi</h6>
+                </div>
+                <div class="panel-body">
+                    <table class="table table-bordered">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Poster</th>
+                                <th>Film Adı</th>
+                                <th>Yayın Tarihi</th>
+                                <th>İşlemler</th>
+                            </tr>
+                        </thead>
+                        <tbody id="movies_list">
+                            <!-- AJAX ile doldurulacak -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <div class="tab-pane" id="tabdiscover">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h6 class="panel-title">Popüler Filmler</h6>
+                </div>
+                <div class="panel-body">
+                    <div class="form-inline">
+                        <div class="form-group">
+                            <select class="form-control" id="sort_by">
+                                <option value="popularity.desc">Popülerlik (Azalan)</option>
+                                <option value="vote_average.desc">Puan (Azalan)</option>
+                                <option value="release_date.desc">Yayın Tarihi (Yeni)</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" onclick="loadDiscover()">Filtrele</button>
+                    </div>
+                    <div id="discover_results" class="movie-grid mt-3"></div>
+                </div>
+            </div>
+        </div>
+        <div class="tab-pane" id="tabsettings">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h6 class="panel-title">Eklenti Ayarları</h6>
+                </div>
+                <div class="panel-body">
+                    <form method="POST" action="" class="form-horizontal" id="settingsForm">
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label">TMDB API Key:</label>
+                            <div class="col-sm-10">
+                                <input type="text" class="form-control" name="tmdb_api_key" value="<?php echo $tmdb_config['api_key']; ?>">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label">Dil:</label>
+                            <div class="col-sm-10">
+                                <select class="form-control" name="default_language">
+                                    <option value="tr-TR" <?php echo $selected_tr; ?>>Türkçe</option>
+                                    <option value="en-US" <?php echo $selected_en; ?>>İngilizce</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label">Film Kategorisi:</label>
+                            <div class="col-sm-10">
+                                <input type="text" class="form-control" name="movie_category" value="<?php echo $tmdb_config['movie_category']; ?>">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="col-sm-2 control-label">Dizi Kategorisi:</label>
+                            <div class="col-sm-10">
+                                <input type="text" class="form-control" name="tv_category" value="<?php echo $tmdb_config['tv_category']; ?>">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <div class="col-sm-offset-2 col-sm-10">
+                                <button type="submit" class="btn btn-primary">Kaydet</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- JavaScript Kodları -->
+<script type="text/javascript">
+var dle_root = '<?php echo $config['http_home_url']; ?>';
+var dle_login_hash = '<?php echo $dle_login_hash; ?>';
+
+function searchMovies() {
+    var query = $('#movie_search').val();
+    var type = $('#content_type').val(); // Film veya dizi seçimi
+
+    $.ajax({
+        url: "engine/ajax/controller.php?mod=movies",
+        method: "POST",
+        data: {
+            action: "search",
+            query: query,
+            type: type,
+            user_hash: dle_login_hash
+        },
+        success: function(response) {
+            console.log(response); // Yanıtı konsola yazdır
+            try {
+                var data = JSON.parse(response); // JSON'u ayrıştır
+                if (data.status === 'success') {
+                    var results = data.results;
+                    var html = '';
+
+                    // JSON yanıtını HTML'e dönüştür
+                    results.forEach(function(movie) {
+                        var releaseYear = movie.release_date ? movie.release_date.split('-')[0] : 'Bilinmiyor';
+                        var posterPath = movie.poster_path ? 'https://image.tmdb.org/t/p/w500' + movie.poster_path : 'https://via.placeholder.com/200x300?text=Resim+Yok';
+                        html += '<div class="movie-card">';
+                        html += '<img src="' + posterPath + '" alt="' + movie.title + '">';
+                        html += '<h3>' + movie.title + '</h3>';
+                        html += '<p>' + releaseYear + '</p>';
+                        html += '<button class="btn btn-primary" onclick="addMovie(' + movie.id + ')">Ekle</button>';
+                        html += '</div>';
+                    });
+
+                    // HTML içeriğini sayfaya ekle
+                    $('#search_results').html(html);
+                } else {
+                    // Hata mesajını göster
+                    var errorMessage = data.message || 'Bilinmeyen hata';
+                    DLEalert("Film aranırken hata oluştu: " + errorMessage, "error");
+                }
+            } catch (e) {
+                console.error("JSON ayrıştırma hatası:", e); // JSON ayrıştırma hatası
+                DLEalert("Yanıt işlenirken hata oluştu.", "error");
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error(xhr.responseText); // Hata mesajını konsola yazdır
+            DLEalert("AJAX hatası: " + error, "error");
+        }
+    });
+}
+function loadDiscover() {
+    var sort = $('#sort_by').val();
+    $.ajax({
+        url: "engine/ajax/controller.php?mod=movies", // Bu satırı düzeltin
+        method: "POST",
+        data: {
+            action: "discover",
+            sort_by: sort,
+            user_hash: dle_login_hash
+        },
+        success: function(response) {
+            $('#discover_results').html(response);
+        }
+    });
+}
+
+function addMovie(tmdb_id) {
+    $.ajax({
+        url: "engine/ajax/controller.php?mod=movies",
+        method: "POST",
+        data: {
+            action: "import",
+            id: tmdb_id,
+            type: "movie",
+            user_hash: dle_login_hash
+        },
+        success: function(response) {
+            if (response.status === 'success') {
+                DLEalert("Film başarıyla eklendi!", "success");
+            } else {
+                DLEalert("Film eklenirken hata oluştu: " + response.message, "error");
+            }
+        }
+    });
+}
+$('#settingsForm').on('submit', function(e) {
+    e.preventDefault(); // Sayfa yenilenmesini engelle
+    var formData = $(this).serialize(); // Form verilerini al
+    formData += '&action=save_settings&user_hash=' + dle_login_hash; // Ek parametreler ekle
+
+    $.ajax({
+        url: "engine/ajax/controller.php?mod=movies", // Bu satırı düzeltin
+        method: "POST",
+        data: formData,
+        success: function(response) {
+            console.log(response); // Yanıtı konsola yazdır
+            if (response.status === 'success') {
+                DLEalert("Ayarlar başarıyla kaydedildi!", "success");
+            } else {
+                DLEalert("Ayarlar kaydedilirken hata oluştu: " + response.message, "error");
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error(xhr.responseText); // Hata mesajını konsola yazdır
+            DLEalert("AJAX hatası: " + error, "error");
+        }
+    });
+});
+</script>
+
+<!-- CSS Stilleri -->
+<style>
+/* Film kartları için stil */
+.movie-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px; /* Kartlar arası boşluk */
+    padding: 10px; /* Grid iç boşluk */
+}
+
+.movie-card {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px;
+    width: 200px; /* Kart genişliği */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Gölge efekti */
+    background-color: #fff;
+    transition: transform 0.2s, box-shadow 0.2s; /* Hover efekti için geçiş */
+    text-align: center; /* İçerikleri ortala */
+}
+
+.movie-card:hover {
+    transform: translateY(-5px); /* Kartı hafifçe yukarı kaldır */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); /* Hover durumunda gölgeyi artır */
+}
+
+.movie-card img {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    margin-bottom: 10px; /* Resim ile başlık arası boşluk */
+}
+
+.movie-card h3 {
+    font-size: 16px;
+    margin: 10px 0;
+    color: #333; /* Başlık rengi */
+}
+
+.movie-card p {
+    font-size: 14px;
+    color: #555;
+    margin: 0; /* Paragrafın varsayılan margin'ini sıfırla */
+}
+
+.movie-card button {
+    margin-top: 10px; /* Butonun üst boşluğu */
+    width: 100%; /* Butonun genişliği */
+}
+
+/* Responsive tasarım */
+@media (max-width: 768px) {
+    .movie-card {
+        width: calc(50% - 15px); /* Mobilde 2 sütun */
+    }
+}
+
+@media (max-width: 480px) {
+    .movie-card {
+        width: 100%; /* Çok küçük ekranlarda tek sütun */
+    }
+}
+</style>
+<?php
+// Admin panel footer
+echofooter();
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/modules/dbmovies.module.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if (!defined('DATALIFEENGINE')) {
+    die("Hacking attempt!");
+}
+
+// Ayarları yükle
+include_once DLEPlugins::Check(ENGINE_DIR . '/data/dbmovies.config.php');
+
+// Film listesi gösterme fonksiyonu
+function show_movies() {
+    global $db, $tmdb_config;
+
+    $movies = $db->query("SELECT * FROM " . PREFIX . "_post WHERE category = '{$tmdb_config['movie_category']}' ORDER BY date DESC");
+
+    while ($movie = $db->get_row($movies)) {
+        echo "<div class='movie'>";
+        echo "<h2>{$movie['title']}</h2>";
+        echo "<p>{$movie['short_story']}</p>";
+        echo "</div>";
+    }
+}
+
+// Film detayları gösterme fonksiyonu
+function show_movie_details($id) {
+    global $db;
+
+    $movie = $db->super_query("SELECT * FROM " . PREFIX . "_post WHERE id = '{$id}'");
+
+    if ($movie) {
+        echo "<div class='movie-details'>";
+        echo "<h2>{$movie['title']}</h2>";
+        echo "<p>{$movie['full_story']}</p>";
+        echo "</div>";
+    } else {
+        echo "Film bulunamadı.";
+    }
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/data/dbmovies.config.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if (!defined('DATALIFEENGINE')) {
+    die("Hacking attempt!");
+}
+
+// Varsayılan ayarlar
+$tmdb_config = [
+    'api_key' => '',
+    'default_language' => 'tr-TR',
+    'movie_category' => 0,
+    'tv_category' => 0
+];
+
+// Veritabanından ayarları çek
+$config = $db->super_query("SELECT * FROM " . PREFIX . "_dbmovies_config WHERE id = 1");
+
+if ($config) {
+    $tmdb_config = array_merge($tmdb_config, $config);
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+</dleplugin>
