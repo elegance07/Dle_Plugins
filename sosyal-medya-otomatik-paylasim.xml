@@ -1,0 +1,324 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dleplugin>
+	<name>Sosyal Medya Otomatik Paylaşım</name>
+	<description>Makaleler Twitter ve Facebook&#039;ta otomatik paylaşılır</description>
+	<icon>engine/skins/images/social_share.png</icon>
+	<version>1.0</version>
+	<dleversion>15.0</dleversion>
+	<versioncompare>greater</versioncompare>
+	<upgradeurl></upgradeurl>
+	<filedelete>0</filedelete>
+	<needplugin></needplugin>
+	<mnotice>0</mnotice>
+	<mysqlinstall><![CDATA[CREATE TABLE IF NOT EXISTS {prefix}_social_share_config (
+    `id` int(11) NOT NULL AUTO_INCREMENT,
+    `config_name` varchar(64) NOT NULL,
+    `config_value` text NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `config_name` (`config_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO {prefix}_admin_sections (name, title, descr, icon, allow_groups)
+VALUES ('social_share', 'Sosyal Medya Paylaşım', 'Otomatik sosyal medya paylaşım ayarları', 'share-alt', '1');]]></mysqlinstall>
+	<mysqlupgrade><![CDATA[]]></mysqlupgrade>
+	<mysqlenable><![CDATA[]]></mysqlenable>
+	<mysqldisable><![CDATA[]]></mysqldisable>
+	<mysqldelete><![CDATA[DROP TABLE IF EXISTS {prefix}_social_share_config;
+DELETE FROM {prefix}_admin_sections WHERE name = 'social_share';]]></mysqldelete>
+	<phpinstall><![CDATA[]]></phpinstall>
+	<phpupgrade><![CDATA[]]></phpupgrade>
+	<phpenable><![CDATA[]]></phpenable>
+	<phpdisable><![CDATA[]]></phpdisable>
+	<phpdelete><![CDATA[]]></phpdelete>
+	<notice><![CDATA[]]></notice>
+	<file name="engine/inc/social_share.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE') || !defined('LOGGED_IN')) {
+    die("Admin paneline doğrudan erişim yasak!");
+}
+
+if($action == "save") {
+    if($_REQUEST['user_hash'] == "" || $_REQUEST['user_hash'] != $dle_login_hash) {
+        msg("error", $lang['addnews_error'], "Geçersiz güvenlik kodu");
+    }
+    
+    $config_values = array(
+        'twitter_api_key' => $_POST['twitter_api_key'],
+        'twitter_api_secret' => $_POST['twitter_api_secret'],
+        'twitter_access_token' => $_POST['twitter_access_token'],
+        'twitter_access_token_secret' => $_POST['twitter_access_token_secret'],
+        'facebook_app_id' => $_POST['facebook_app_id'],
+        'facebook_app_secret' => $_POST['facebook_app_secret'],
+        'facebook_access_token' => $_POST['facebook_access_token']
+    );
+    
+    $config_json = json_encode($config_values);
+    
+    // Önce mevcut kaydı kontrol et
+    $check_exists = $db->query("SELECT id FROM " . PREFIX . "_social_share_config WHERE config_name = 'main'");
+    
+    if($db->num_rows($check_exists) > 0) {
+        // Kayıt varsa güncelle
+        $db->query("UPDATE " . PREFIX . "_social_share_config SET config_value = '" . $db->safesql($config_json) . "' WHERE config_name = 'main'");
+    } else {
+        // Kayıt yoksa yeni ekle
+        $db->query("INSERT INTO " . PREFIX . "_social_share_config (config_name, config_value) VALUES ('main', '" . $db->safesql($config_json) . "')");
+    }
+    
+    clear_cache();
+    msg("success", "Başarılı", "Ayarlar başarıyla kaydedildi!", "?mod=social_share");
+}
+
+// Mevcut ayarları yükle
+$config_data = $db->super_query("SELECT config_value FROM " . PREFIX . "_social_share_config WHERE config_name = 'main'");
+$social_config = array();
+
+if($config_data['config_value']) {
+    $social_config = json_decode($config_data['config_value'], true);
+}
+
+echoheader("<i class='fa fa-share-alt'></i> Sosyal Medya Paylaşım Ayarları", "API Yapılandırması");
+?>
+
+<form action="?mod=social_share&action=save" method="POST">
+    <input type="hidden" name="user_hash" value="<?php echo $dle_login_hash; ?>" />
+    
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <h6 class="panel-title"><i class="fa fa-twitter"></i> Twitter API Ayarları</h6>
+        </div>
+        <div class="panel-body">
+            <div class="form-group">
+                <label>Twitter API Key:</label>
+                <input type="text" class="form-control" name="twitter_api_key" value="<?php echo htmlspecialchars($social_config['twitter_api_key']); ?>" />
+            </div>
+            <div class="form-group">
+                <label>Twitter API Secret:</label>
+                <input type="password" class="form-control" name="twitter_api_secret" value="<?php echo htmlspecialchars($social_config['twitter_api_secret']); ?>" />
+            </div>
+            <div class="form-group">
+                <label>Twitter Access Token:</label>
+                <input type="text" class="form-control" name="twitter_access_token" value="<?php echo htmlspecialchars($social_config['twitter_access_token']); ?>" />
+            </div>
+            <div class="form-group">
+                <label>Twitter Access Token Secret:</label>
+                <input type="password" class="form-control" name="twitter_access_token_secret" value="<?php echo htmlspecialchars($social_config['twitter_access_token_secret']); ?>" />
+            </div>
+        </div>
+    </div>
+    
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <h6 class="panel-title"><i class="fa fa-facebook"></i> Facebook API Ayarları</h6>
+        </div>
+        <div class="panel-body">
+            <div class="form-group">
+                <label>Facebook App ID:</label>
+                <input type="text" class="form-control" name="facebook_app_id" value="<?php echo htmlspecialchars($social_config['facebook_app_id']); ?>" />
+            </div>
+            <div class="form-group">
+                <label>Facebook App Secret:</label>
+                <input type="password" class="form-control" name="facebook_app_secret" value="<?php echo htmlspecialchars($social_config['facebook_app_secret']); ?>" />
+            </div>
+            <div class="form-group">
+                <label>Facebook Access Token:</label>
+                <input type="text" class="form-control" name="facebook_access_token" value="<?php echo htmlspecialchars($social_config['facebook_access_token']); ?>" />
+            </div>
+        </div>
+    </div>
+    
+    <div class="panel-footer">
+        <button type="submit" class="btn bg-teal btn-sm btn-raised position-left">
+            <i class="fa fa-floppy-o position-left"></i>Ayarları Kaydet
+        </button>
+    </div>
+</form>
+
+<script type="text/javascript">
+$(function(){
+    $('.position-left').css('margin-right', '5px');
+});
+</script>
+
+<?php
+echofooter();
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/modules/social_share.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) {
+    die("Eklenti doğrudan çalıştırılamaz!");
+}
+
+include_once DLEPlugins::Check(ENGINE_DIR . '/classes/social.class.php');
+
+class DLESocialShare {
+    private $twitter;
+    private $facebook;
+    private $config;
+    
+    public function __construct() {
+        global $db;
+        
+        $config_data = $db->super_query("SELECT config_value FROM " . PREFIX . "_social_share_config WHERE config_name = 'main'");
+        if($config_data['config_value']) {
+            $this->config = json_decode($config_data['config_value'], true);
+            $this->initAPIs();
+        }
+    }
+    
+    private function initAPIs() {
+        // Twitter ve Facebook API'lerini başlat
+        if(!empty($this->config['twitter_api_key'])) {
+            $this->twitter = new TwitterAPI(
+                $this->config['twitter_api_key'],
+                $this->config['twitter_api_secret'],
+                $this->config['twitter_access_token'],
+                $this->config['twitter_access_token_secret']
+            );
+        }
+        
+        if(!empty($this->config['facebook_app_id'])) {
+            $this->facebook = new FacebookAPI(
+                $this->config['facebook_app_id'],
+                $this->config['facebook_app_secret'],
+                $this->config['facebook_access_token']
+            );
+        }
+    }
+    
+    public function sharePost($title, $short_story, $full_url) {
+        // Twitter'da paylaş
+        if($this->twitter) {
+            $tweet_text = $title . "\n\n" . mb_substr($short_story, 0, 100) . "...\n" . $full_url;
+            $this->twitter->post($tweet_text);
+        }
+        
+        // Facebook'ta paylaş
+        if($this->facebook) {
+            $this->facebook->post([
+                'message' => $title . "\n\n" . $short_story,
+                'link' => $full_url
+            ]);
+        }
+    }
+}
+
+// Makale eklendiğinde paylaş
+if($is_logged && $action == "addnews" && $approve) {
+    $social = new DLESocialShare();
+    $social->sharePost($title, $short_story, $config['http_home_url'] . date('Y/m/d/') . $alt_name . '.html');
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/classes/social.class.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+
+class TwitterAPI {
+    private $api_key;
+    private $api_secret;
+    private $access_token;
+    private $access_token_secret;
+
+    public function __construct($api_key, $api_secret, $access_token, $access_token_secret) {
+        $this->api_key = $api_key;
+        $this->api_secret = $api_secret;
+        $this->access_token = $access_token;
+        $this->access_token_secret = $access_token_secret;
+    }
+
+    public function post($message) {
+        $url = 'https://api.twitter.com/1.1/statuses/update.json';
+        $oauth = array(
+            'status' => $message,
+            'oauth_consumer_key' => $this->api_key,
+            'oauth_token' => $this->access_token,
+            'oauth_signature_method' => 'HMAC-SHA1',
+            'oauth_timestamp' => time(),
+            'oauth_nonce' => uniqid(),
+            'oauth_version' => '1.0'
+        );
+
+        $base_info = $this->buildBaseString($url, 'POST', $oauth);
+        $composite_key = rawurlencode($this->api_secret) . '&' . rawurlencode($this->access_token_secret);
+        $oauth['oauth_signature'] = base64_encode(hash_hmac('sha1', $base_info, $composite_key, true));
+
+        $header = array($this->buildAuthorizationHeader($oauth), 'Expect:');
+        $options = array(
+            CURLOPT_HTTPHEADER => $header,
+            CURLOPT_POSTFIELDS => http_build_query(array('status' => $message)),
+            CURLOPT_HEADER => false,
+            CURLOPT_URL => $url,
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_SSL_VERIFYPEER => false
+        );
+
+        $feed = curl_init();
+        curl_setopt_array($feed, $options);
+        $result = curl_exec($feed);
+        curl_close($feed);
+
+        return $result;
+    }
+
+    private function buildBaseString($baseURI, $method, $params) {
+        $r = array();
+        ksort($params);
+        foreach($params as $key => $value){
+            $r[] = "$key=" . rawurlencode($value);
+        }
+        return $method . "&" . rawurlencode($baseURI) . '&' . rawurlencode(implode('&', $r));
+    }
+
+    private function buildAuthorizationHeader($oauth) {
+        $r = 'Authorization: OAuth ';
+        $values = array();
+        foreach($oauth as $key => $value)
+            $values[] = "$key=\"" . rawurlencode($value) . "\"";
+        $r .= implode(', ', $values);
+        return $r;
+    }
+}
+
+class FacebookAPI {
+    private $app_id;
+    private $app_secret;
+    private $access_token;
+
+    public function __construct($app_id, $app_secret, $access_token) {
+        $this->app_id = $app_id;
+        $this->app_secret = $app_secret;
+        $this->access_token = $access_token;
+    }
+
+    public function post($params) {
+        $url = 'https://graph.facebook.com/v11.0/me/feed';
+        $params['access_token'] = $this->access_token;
+
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($params));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        
+        $result = curl_exec($ch);
+        curl_close($ch);
+
+        return $result;
+    }
+}
+
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+</dleplugin>
