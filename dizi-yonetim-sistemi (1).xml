@@ -1,0 +1,1764 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dleplugin>
+	<name>Dizi Yönetim Sistemi</name>
+	<description>DLE için Dizi, Sezon ve Bölüm yönetim sistemi. Normal makale yapısını kullanarak dizileri yönetmenizi sağlar.</description>
+	<icon></icon>
+	<version>1.0</version>
+	<dleversion>15.0</dleversion>
+	<versioncompare>greater</versioncompare>
+	<upgradeurl></upgradeurl>
+	<filedelete>0</filedelete>
+	<needplugin></needplugin>
+	<mnotice>0</mnotice>
+	<mysqlinstall><![CDATA[INSERT INTO {prefix}_admin_sections (name, title, descr, icon, allow_groups) VALUES 
+('dizi_panel', 'Dizi Paneli', 'Dizi, sezon ve bölüm yönetim paneli', 'television', '1'),
+('season', 'Sezon Ekle', 'Dizilere sezon ekleme modülü', 'television', '1'),
+('episode', 'Bölüm Ekle', 'Sezonlara bölüm ekleme modülü', 'film', '1');]]></mysqlinstall>
+	<mysqlupgrade><![CDATA[]]></mysqlupgrade>
+	<mysqlenable><![CDATA[REPLACE INTO {prefix}_admin_sections (name, title, descr, icon, allow_groups) VALUES 
+('dizi_panel', 'Dizi Paneli', 'Dizi, sezon ve bölüm yönetim paneli', 'television', '1'),
+('season', 'Sezon Ekle', 'Dizilere sezon ekleme modülü', 'television', '1'),
+('episode', 'Bölüm Ekle', 'Sezonlara bölüm ekleme modülü', 'film', '1');]]></mysqlenable>
+	<mysqldisable><![CDATA[DELETE FROM {prefix}_admin_sections WHERE name IN ('dizi_panel', 'season', 'episode');]]></mysqldisable>
+	<mysqldelete><![CDATA[DELETE FROM {prefix}_admin_sections WHERE name IN ('dizi_panel', 'season', 'episode');DELETE FROM `prefix_admin_sections` 
+WHERE `name` IN ('dizi_panel', 'season', 'episode');]]></mysqldelete>
+	<phpinstall><![CDATA[]]></phpinstall>
+	<phpupgrade><![CDATA[]]></phpupgrade>
+	<phpenable><![CDATA[]]></phpenable>
+	<phpdisable><![CDATA[]]></phpdisable>
+	<phpdelete><![CDATA[]]></phpdelete>
+	<notice><![CDATA[]]></notice>
+	<file name="engine/inc/episode.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) die("Access denied!");
+
+if($member_id['user_group'] != 1) {
+    msg("error", $lang['index_denied'], $lang['index_denied']);
+}
+
+include_once ENGINE_DIR . '/inc/include/functions.inc.php';
+
+// DLE Editör için gereken dosyalar
+if( $config['allow_admin_wysiwyg'] == 1 ) {
+    $js_array[] = "engine/skins/codemirror/js/code.js";
+    $js_array[] = "engine/editor/jscripts/froala/editor.js";
+    $js_array[] = "engine/editor/jscripts/froala/languages/{$lang['language_code']}.js";
+    $css_array[] = "engine/editor/jscripts/froala/css/editor.css";
+}
+
+if( $config['allow_admin_wysiwyg'] == 2 ) {
+    $js_array[] = "engine/editor/jscripts/tiny_mce/tinymce.min.js";
+}
+
+if( !$config['allow_admin_wysiwyg'] ) {
+    $js_array[] = "engine/classes/js/typograf.min.js";
+}
+
+$js_array[] = "engine/classes/js/sortable.js";
+$js_array[] = "engine/classes/uploads/html5/plupload/plupload.full.min.js";
+$js_array[] = "engine/classes/uploads/html5/plupload/i18n/{$lang['language_code']}.js";
+
+echoheader("<i class=\"fa fa-tv position-left\"></i><span class=\"text-semibold\">Bölüm Yönetimi</span>", array('?mod=episode' => 'Bölüm Ekle/Düzenle'));
+
+// Post işlemi
+if($action == "doadd") {
+    
+    $title = $db->safesql(trim($_POST['title']));
+    $alt_name = $db->safesql(trim($_POST['alt_name']));
+    $season_id = intval($_POST['season_id']);
+    $episode_number = intval($_POST['episode_number']);
+    $video_url = $db->safesql(trim($_POST['video_url']));
+    
+    if(!$alt_name) $alt_name = totranslit($title);
+    
+    // XFields verisi oluştur
+    $xfields_data = "type|episode||season_id|{$season_id}||episode_number|{$episode_number}||video_url|{$video_url}||";
+    
+    if ($config['allow_admin_wysiwyg']) {
+        $short_story = $db->safesql($parse->BB_Parse($parse->process($_POST['short_story']), false));
+        $full_story = $db->safesql($parse->BB_Parse($parse->process($_POST['full_story']), false));
+    } else {
+        $short_story = $db->safesql($parse->BB_Parse($_POST['short_story'], false));
+        $full_story = $db->safesql($parse->BB_Parse($_POST['full_story'], false));
+    }
+    
+    $metatitle = $db->safesql(trim($_POST['metatitle']));
+    $metadescr = $db->safesql(trim($_POST['metadescr']));
+    
+    $db->query("INSERT INTO " . PREFIX . "_post 
+        (date, title, alt_name, short_story, full_story, xfields, autor, metatitle, metadescr) 
+        VALUES 
+        ('" . time() . "', 
+        '$title', 
+        '$alt_name', 
+        '$short_story', 
+        '$full_story', 
+        '$xfields_data', 
+        '{$member_id['name']}',
+        '$metatitle',
+        '$metadescr')");
+    
+    clear_cache();
+    msg("success", "Bölüm Eklendi", "Bölüm başarıyla eklendi", "?mod=episode");
+    
+} else {
+    
+    // Sezonları listele
+    $season_list = "";
+    $season_query = $db->query("SELECT p.id, p.title, p.xfields 
+                               FROM " . PREFIX . "_post p 
+                               WHERE p.xfields LIKE '%type|season%' 
+                               ORDER BY CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(p.xfields, 'season_number|', -1), '||', 1) AS SIGNED) ASC");
+            
+    while($row = $db->get_row($season_query)) {
+        preg_match("/season_number\|(.*?)\|\|/", $row['xfields'], $matches);
+        $season_number = isset($matches[1]) ? $matches[1] : '';
+        $season_list .= "<option value=\"{$row['id']}\">{$row['title']} (Sezon {$season_number})</option>";
+    }
+    
+    echo <<<HTML
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <ul class="nav nav-tabs nav-tabs-solid">
+                <li class="active"><a href="#tab_episodes" data-toggle="tab">Mevcut Bölümler</a></li>
+                <li><a href="#tab_add" data-toggle="tab">Yeni Bölüm Ekle</a></li>
+            </ul>
+        </div>
+        
+        <div class="panel-tab-content tab-content">
+            <div class="tab-pane active" id="tab_episodes">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Dizi Adı</th>
+                                <th>Sezon</th>
+                                <th>Bölüm No</th>
+                                <th>Bölüm Adı</th>
+                                <th>İşlemler</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+HTML;
+
+    $episodes_query = $db->query("SELECT 
+        e.id, 
+        e.title, 
+        e.xfields, 
+        s.title as season_title,
+        p.title as series_title 
+    FROM " . PREFIX . "_post e 
+    LEFT JOIN " . PREFIX . "_post s ON s.id = SUBSTRING_INDEX(SUBSTRING_INDEX(e.xfields, 'season_id|', -1), '||', 1)
+    LEFT JOIN " . PREFIX . "_post p ON p.id = SUBSTRING_INDEX(SUBSTRING_INDEX(s.xfields, 'series_id|', -1), '||', 1)
+    WHERE e.xfields LIKE '%type|episode%' 
+    ORDER BY p.title ASC, 
+        CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(s.xfields, 'season_number|', -1), '||', 1) AS SIGNED) ASC,
+        CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(e.xfields, 'episode_number|', -1), '||', 1) AS SIGNED) ASC");
+
+    while($row = $db->get_row($episodes_query)) {
+        preg_match("/episode_number\|(.*?)\|\|/", $row['xfields'], $matches);
+        $episode_number = isset($matches[1]) ? $matches[1] : '';
+        
+        echo "<tr>
+                <td>{$row['id']}</td>
+                <td>{$row['series_title']}</td>
+                <td>{$row['season_title']}</td>
+                <td>{$episode_number}</td>
+                <td>{$row['title']}</td>
+                <td>
+                    <a href='?mod=editnews&action=editnews&id={$row['id']}' class='btn btn-xs btn-primary'>Düzenle</a>
+                </td>
+            </tr>";
+    }
+
+    echo <<<HTML
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <div class="tab-pane" id="tab_add">
+                <form method="post" name="addnews" id="addnews" class="form-horizontal">
+                    <input type="hidden" name="action" value="doadd">
+                    <input type="hidden" name="mod" value="episode">
+                    <input type="hidden" name="user_hash" value="{$dle_login_hash}">
+                    
+                    <div class="panel-body">
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Sezon:</label>
+                            <div class="col-sm-10">
+                                <select name="season_id" class="form-control" required>
+                                    <option value="">Sezon Seçin</option>
+                                    {$season_list}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Bölüm Numarası:</label>
+                            <div class="col-sm-10">
+                                <input type="number" name="episode_number" class="form-control" required min="1">
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Bölüm Başlığı:</label>
+                            <div class="col-sm-10">
+                                <input type="text" name="title" class="form-control" required>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">SEF URL:</label>
+                            <div class="col-sm-10">
+                                <input type="text" name="alt_name" class="form-control">
+                                <span class="help-block">Boş bırakırsanız otomatik oluşturulacaktır.</span>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Video URL:</label>
+                            <div class="col-sm-10">
+                                <input type="text" name="video_url" class="form-control" required>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Meta Başlık:</label>
+                            <div class="col-sm-10">
+                                <input type="text" name="metatitle" class="form-control">
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Meta Açıklama:</label>
+                            <div class="col-sm-10">
+                                <textarea name="metadescr" class="form-control" rows="3"></textarea>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group editor-group">
+                            <label class="control-label col-md-2">Kısa Açıklama:</label>
+                            <div class="col-md-10">
+HTML;
+
+if ($config['allow_admin_wysiwyg']) {
+    include (DLEPlugins::Check(ENGINE_DIR . '/editor/shortnews.php'));
+} else {
+    include (DLEPlugins::Check(ENGINE_DIR . '/inc/include/inserttag.php'));
+    echo "<div class=\"editor-panel\"><div class=\"shadow-depth1\">{$bb_panel}<textarea name=\"short_story\" id=\"short_story\" onfocus=\"setFieldName(this.name)\" class=\"form-control\" rows=\"5\"></textarea></div></div>";
+}
+
+echo <<<HTML
+                            </div>
+                        </div>
+                        
+                        <div class="form-group editor-group">
+                            <label class="control-label col-md-2">Tam Açıklama:</label>
+                            <div class="col-md-10">
+HTML;
+
+if ($config['allow_admin_wysiwyg']) {
+    include (DLEPlugins::Check(ENGINE_DIR . '/editor/fullnews.php'));
+} else {
+    echo "<div class=\"editor-panel\"><div class=\"shadow-depth1\">{$bb_panel}<textarea name=\"full_story\" id=\"full_story\" onfocus=\"setFieldName(this.name)\" class=\"form-control\" rows=\"10\"></textarea></div></div>";
+}
+
+echo <<<HTML
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="panel-footer">
+                        <button type="submit" class="btn btn-success"><i class="fa fa-floppy-o position-left"></i>Bölüm Ekle</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+HTML;
+
+}
+
+echofooter();
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/season.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) die("Access denied!");
+
+if($member_id['user_group'] != 1) {
+    msg("error", $lang['index_denied'], $lang['index_denied']);
+}
+
+include_once ENGINE_DIR . '/inc/include/functions.inc.php';
+
+if( $config['allow_admin_wysiwyg'] == 1 ) {
+    $js_array[] = "engine/skins/codemirror/js/code.js";
+    $js_array[] = "engine/editor/jscripts/froala/editor.js";
+    $js_array[] = "engine/editor/jscripts/froala/languages/{$lang['language_code']}.js";
+    $css_array[] = "engine/editor/jscripts/froala/css/editor.css";
+}
+
+if( $config['allow_admin_wysiwyg'] == 2 ) {
+    $js_array[] = "engine/editor/jscripts/tiny_mce/tinymce.min.js";
+}
+
+if( !$config['allow_admin_wysiwyg'] ) {
+    $js_array[] = "engine/classes/js/typograf.min.js";
+}
+
+$js_array[] = "engine/classes/js/sortable.js";
+$js_array[] = "engine/classes/uploads/html5/plupload/plupload.full.min.js";
+$js_array[] = "engine/classes/uploads/html5/plupload/i18n/{$lang['language_code']}.js";
+
+echoheader("<i class=\"fa fa-tv position-left\"></i><span class=\"text-semibold\">Sezon Yönetimi</span>", array('?mod=season' => 'Sezon Ekle/Düzenle'));
+
+// Post işlemi
+if($action == "doadd") {
+    
+    $title = $db->safesql(trim($_POST['title']));
+    $alt_name = $db->safesql(trim($_POST['alt_name']));
+    $series_id = intval($_POST['series_id']);
+    $season_number = intval($_POST['season_number']);
+    
+    if(!$alt_name) $alt_name = totranslit($title);
+    
+    // XFields verisi oluştur
+    $xfields_data = "type|season||series_id|{$series_id}||season_number|{$season_number}||";
+    
+    if ($config['allow_admin_wysiwyg']) {
+        $short_story = $db->safesql($parse->BB_Parse($parse->process($_POST['short_story']), false));
+        $full_story = $db->safesql($parse->BB_Parse($parse->process($_POST['full_story']), false));
+    } else {
+        $short_story = $db->safesql($parse->BB_Parse($_POST['short_story'], false));
+        $full_story = $db->safesql($parse->BB_Parse($_POST['full_story'], false));
+    }
+    
+    $metatitle = $db->safesql(trim($_POST['metatitle']));
+    $metadescr = $db->safesql(trim($_POST['metadescr']));
+    
+    $db->query("INSERT INTO " . PREFIX . "_post 
+        (date, title, alt_name, short_story, full_story, xfields, autor, metatitle, metadescr) 
+        VALUES 
+        ('" . time() . "', 
+        '$title', 
+        '$alt_name', 
+        '$short_story', 
+        '$full_story', 
+        '$xfields_data', 
+        '{$member_id['name']}',
+        '$metatitle',
+        '$metadescr')");
+    
+    clear_cache();
+    msg("success", "Sezon Eklendi", "Sezon başarıyla eklendi", "?mod=season");
+    
+} else {
+    
+    // Dizileri listele
+    $series_list = "";
+    $series_query = $db->query("SELECT p.id, p.title 
+                               FROM " . PREFIX . "_post p 
+                               WHERE p.approve='1' 
+                               ORDER BY p.id DESC");
+            
+    while($row = $db->get_row($series_query)) {
+        $series_list .= "<option value=\"{$row['id']}\">{$row['title']}</option>";
+    }
+    
+    echo <<<HTML
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <ul class="nav nav-tabs nav-tabs-solid">
+                <li class="active"><a href="#tab_seasons" data-toggle="tab">Mevcut Sezonlar</a></li>
+                <li><a href="#tab_add" data-toggle="tab">Yeni Sezon Ekle</a></li>
+            </ul>
+        </div>
+        
+        <div class="panel-tab-content tab-content">
+            <div class="tab-pane active" id="tab_seasons">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Sezon Adı</th>
+                                <th>Dizi Adı</th>
+                                <th>Sezon No</th>
+                                <th>İşlemler</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+HTML;
+
+    $seasons_query = $db->query("SELECT s.id, s.title, s.xfields, p.title as series_title 
+                                FROM " . PREFIX . "_post s 
+                                LEFT JOIN " . PREFIX . "_post p ON p.id = SUBSTRING_INDEX(SUBSTRING_INDEX(s.xfields, 'series_id|', -1), '||', 1)
+                                WHERE s.xfields LIKE '%type|season%' 
+                                ORDER BY CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(s.xfields, 'season_number|', -1), '||', 1) AS SIGNED) ASC");
+
+    while($row = $db->get_row($seasons_query)) {
+        preg_match("/season_number\|(.*?)\|\|/", $row['xfields'], $matches);
+        $season_number = isset($matches[1]) ? $matches[1] : '';
+        
+        echo "<tr>
+                <td>{$row['id']}</td>
+                <td>{$row['title']}</td>
+                <td>{$row['series_title']}</td>
+                <td>{$season_number}</td>
+                <td>
+                    <a href='?mod=editnews&action=editnews&id={$row['id']}' class='btn btn-xs btn-primary'>Düzenle</a>
+                </td>
+            </tr>";
+    }
+
+    echo <<<HTML
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <div class="tab-pane" id="tab_add">
+                <form method="post" name="addnews" id="addnews" class="form-horizontal">
+                    <input type="hidden" name="action" value="doadd">
+                    <input type="hidden" name="mod" value="season">
+                    <input type="hidden" name="user_hash" value="{$dle_login_hash}">
+                    
+                    <div class="panel-body">
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Ana Dizi:</label>
+                            <div class="col-sm-10">
+                                <select name="series_id" class="form-control" required>
+                                    <option value="">Dizi Seçin</option>
+                                    {$series_list}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Sezon Numarası:</label>
+                            <div class="col-sm-10">
+                                <input type="number" name="season_number" class="form-control" required min="1">
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Sezon Başlığı:</label>
+                            <div class="col-sm-10">
+                                <input type="text" name="title" class="form-control" required>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">SEF URL:</label>
+                            <div class="col-sm-10">
+                                <input type="text" name="alt_name" class="form-control">
+                                <span class="help-block">Boş bırakırsanız otomatik oluşturulacaktır.</span>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Meta Başlık:</label>
+                            <div class="col-sm-10">
+                                <input type="text" name="metatitle" class="form-control">
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="control-label col-sm-2">Meta Açıklama:</label>
+                            <div class="col-sm-10">
+                                <textarea name="metadescr" class="form-control" rows="3"></textarea>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group editor-group">
+                            <label class="control-label col-md-2">Kısa Açıklama:</label>
+                            <div class="col-md-10">
+HTML;
+
+if ($config['allow_admin_wysiwyg']) {
+    include (DLEPlugins::Check(ENGINE_DIR . '/editor/shortnews.php'));
+} else {
+    include (DLEPlugins::Check(ENGINE_DIR . '/inc/include/inserttag.php'));
+    echo "<div class=\"editor-panel\"><div class=\"shadow-depth1\">{$bb_panel}<textarea name=\"short_story\" id=\"short_story\" onfocus=\"setFieldName(this.name)\" class=\"form-control\" rows=\"5\"></textarea></div></div>";
+}
+
+echo <<<HTML
+                            </div>
+                        </div>
+                        
+                        <div class="form-group editor-group">
+                            <label class="control-label col-md-2">Tam Açıklama:</label>
+                            <div class="col-md-10">
+HTML;
+
+if ($config['allow_admin_wysiwyg']) {
+    include (DLEPlugins::Check(ENGINE_DIR . '/editor/fullnews.php'));
+} else {
+    echo "<div class=\"editor-panel\"><div class=\"shadow-depth1\">{$bb_panel}<textarea name=\"full_story\" id=\"full_story\" onfocus=\"setFieldName(this.name)\" class=\"form-control\" rows=\"10\"></textarea></div></div>";
+}
+
+echo <<<HTML
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="panel-footer">
+                        <button type="submit" class="btn btn-success"><i class="fa fa-floppy-o position-left"></i>Sezon Ekle</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+HTML;
+
+}
+
+echofooter();
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/modules/seasons_list.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) {
+    die("Hacking attempt!");
+}
+
+global $db, $config, $row;
+
+// Dizi ID'sini al
+$series_id = $row['id'];
+
+// Sezonları sorgula
+$result = $db->query("SELECT p.id, p.title, p.alt_name, p.xfields, p.date 
+    FROM " . PREFIX . "_post p 
+    WHERE p.approve=1 
+    AND p.xfields LIKE '%type|season%' 
+    AND p.xfields LIKE '%series_id|{$series_id}%' 
+    ORDER BY CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(p.xfields, 'season_number|', -1), '||', 1) AS SIGNED) ASC");
+
+if($db->num_rows($result) > 0) {
+    $tpl->load_template('seasons_list.tpl');
+    
+    while($season = $db->get_row($result)) {
+        $xfields = xfieldsdataload($season['xfields']);
+        
+        // Tüm verileri bir array'de topla
+        $season_data = array(
+            'id' => $season['id'],
+            'title' => $season['title'],
+            'alt_name' => $season['alt_name'],
+            'date' => $season['date'],
+            'link' => $config['http_home_url'] . "season/" . $season['id'] . "-" . $season['alt_name'] . ".html",
+            'season_number' => isset($xfields['season_number']) ? $xfields['season_number'] : '',
+            'season_image_url' => isset($xfields['season_image_url']) ? $xfields['season_image_url'] : '',
+            'total_episodes' => isset($xfields['total_episodes']) ? $xfields['total_episodes'] : '',
+            'description' => isset($xfields['description']) ? $xfields['description'] : '',
+            'release_date' => isset($xfields['release_date']) ? $xfields['release_date'] : ''
+        );
+
+        // Template değişkenlerini ayarla
+        foreach($season_data as $key => $value) {
+            if(!empty($value)) {
+                $tpl->set("[xfgiven_{$key}]", "");
+                $tpl->set("[/xfgiven_{$key}]", "");
+                $tpl->set("[xfvalue_{$key}]", $value);
+                $tpl->set("{{$key}}", $value);
+            } else {
+                $tpl->set_block("'\\[xfgiven_{$key}\\](.*?)\\[/xfgiven_{$key}\\]'si", "");
+                $tpl->set("[not-xfgiven_{$key}]", "");
+                $tpl->set("[/not-xfgiven_{$key}]", "");
+            }
+        }
+
+        // Row etiketlerini ayarla
+        $tpl->set('[row]', '');
+        $tpl->set('[/row]', '');
+        
+        $tpl->compile('content');
+        $tpl->clear();
+    }
+    
+    echo $tpl->result['content'];
+} else {
+    echo '<div class="alert alert-info">Henüz sezon eklenmemiş.</div>';
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/modules/episodes_list.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) {
+    die("Hacking attempt!");
+}
+
+global $db, $config, $row;
+
+// Sezon ID'sini al
+$season_id = $row['id'];
+
+// Bölümleri sorgula
+$result = $db->query("SELECT p.id, p.title, p.alt_name, p.xfields, p.date 
+    FROM " . PREFIX . "_post p 
+    WHERE p.approve=1 
+    AND p.xfields LIKE '%type|episode%' 
+    AND p.xfields LIKE '%season_id|{$season_id}%' 
+    ORDER BY CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(p.xfields, 'episode_number|', -1), '||', 1) AS SIGNED) ASC");
+
+// Template verilerini hazırla
+$episodes_data = array();
+while($episode = $db->get_row($result)) {
+    $xfields = xfieldsdataload($episode['xfields']);
+    $episode_data = array(
+        'id' => $episode['id'],
+        'title' => $episode['title'],
+        'alt_name' => $episode['alt_name'],
+        'link' => $config['http_home_url'] . $episode['id'] . '-' . $episode['alt_name'] . '.html',
+        'date' => $episode['date'],
+        'episode_number' => isset($xfields['episode_number']) ? $xfields['episode_number'] : '',
+        'episode_image' => isset($xfields['episode_image']) ? $xfields['episode_image'] : '',
+        'episode_image_url' => isset($xfields['episode_image_url']) ? $xfields['episode_image_url'] : ''
+    );
+    $episodes_data[] = $episode_data;
+}
+
+// Template'i yükle ve verileri gönder
+$tpl->load_template('episodes_list.tpl');
+
+foreach($episodes_data as $episode) {
+    foreach($episode as $key => $value) {
+        $tpl->set('{'.$key.'}', $value);
+        if($value) {
+            $tpl->set("[xfgiven_{$key}]", "");
+            $tpl->set("[/xfgiven_{$key}]", "");
+            $tpl->set("[xfvalue_{$key}]", $value);
+        } else {
+            $tpl->set_block("'\\[xfgiven_{$key}\\](.*?)\\[/xfgiven_{$key}\\]'si", "");
+        }
+    }
+    
+    // [row] tagları için
+    $tpl->set('[row]', '');
+    $tpl->set('[/row]', '');
+    
+    $tpl->compile('episodes');
+}
+
+// Çıktıyı göster
+echo $tpl->result['episodes'];
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/modules/series.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if (!defined('DATALIFEENGINE')) {
+    die("Hacking attempt!");
+}
+
+if (isset($_GET['newsid']) && isset($_GET['seourl'])) {
+    $news_id = intval($_GET['newsid']);
+    $news_seotitle = trim($_GET['seourl']);
+    
+    // Xfields'den dizi tipini kontrol et
+    $row = $db->super_query("SELECT xfields FROM " . PREFIX . "_post WHERE id = '$news_id'");
+    if (strpos($row['xfields'], 'type|series') !== false) {
+        // Template'i series.tpl olarak değiştir
+        $tpl->load_template('series.tpl');
+    }
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/dizi_panel.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) {
+    header( "HTTP/1.1 403 Forbidden" );
+    header ( 'Location: ../../' );
+    die( "Hacking attempt!" );
+}
+
+if($member_id['user_group'] != 1) {
+    msg("error", $lang['index_denied'], $lang['index_denied']);
+}
+
+include_once ENGINE_DIR . '/inc/include/functions.inc.php';
+
+// CSS ve JS dosyalarını ekle
+$css_array[] = "engine/skins/stylesheets/bootstrap.custom.css";
+$css_array[] = "engine/skins/stylesheets/font-awesome.min.css";
+$js_array[] = "engine/classes/js/jquery.custom.js";
+$js_array[] = "engine/skins/javascripts/jquery.flot.js";
+
+echoheader("<i class='fa fa-television'></i> Dizi Paneli", array('?mod=dizi_panel' => 'Dizi Yönetimi'));
+
+// İstatistik kartları için verileri çek
+$today_start = strtotime('today midnight');
+$stats = $db->super_query("SELECT 
+    COUNT(CASE WHEN xfields LIKE '%type|series||%' THEN 1 END) as total_series,
+    COUNT(CASE WHEN xfields LIKE '%type|season||%' THEN 1 END) as total_seasons,
+    COUNT(CASE WHEN xfields LIKE '%type|episode||%' THEN 1 END) as total_episodes,
+    COUNT(CASE WHEN date >= {$today_start} AND (
+        xfields LIKE '%type|series||%' OR 
+        xfields LIKE '%type|season||%' OR 
+        xfields LIKE '%type|episode||%'
+    ) THEN 1 END) as today_added
+FROM " . PREFIX . "_post");
+
+// Dashboard HTML
+echo <<<HTML
+<div class="panel">
+    <div class="panel-content">
+        <!-- İstatistik Kartları -->
+        <div class="row">
+            <div class="col-sm-3">
+                <div class="panel panel-primary">
+                    <div class="panel-body">
+                        <div class="stat-panel text-center">
+                            <div class="stat-panel-number h1">{$stats['total_series']}</div>
+                            <div class="stat-panel-title text-uppercase">Toplam Dizi</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-3">
+                <div class="panel panel-success">
+                    <div class="panel-body">
+                        <div class="stat-panel text-center">
+                            <div class="stat-panel-number h1">{$stats['total_seasons']}</div>
+                            <div class="stat-panel-title text-uppercase">Toplam Sezon</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-3">
+                <div class="panel panel-info">
+                    <div class="panel-body">
+                        <div class="stat-panel text-center">
+                            <div class="stat-panel-number h1">{$stats['total_episodes']}</div>
+                            <div class="stat-panel-title text-uppercase">Toplam Bölüm</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-3">
+                <div class="panel panel-warning">
+                    <div class="panel-body">
+                        <div class="stat-panel text-center">
+                            <div class="stat-panel-number h1">{$stats['today_added']}</div>
+                            <div class="stat-panel-title text-uppercase">Bugün Eklenen</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hızlı Erişim Menüsü -->
+        <div class="panel panel-default">
+            <div class="panel-heading">Hızlı Erişim</div>
+            <div class="panel-body">
+                <div class="row text-center">
+                    <div class="col-xs-3">
+                        <a href="?mod=addnews&action=addnews" class="btn btn-primary btn-block">
+                            <i class="fa fa-plus-circle"></i><br>
+                            Yeni Dizi Ekle
+                        </a>
+                    </div>
+                    <div class="col-xs-3">
+                        <a href="?mod=season" class="btn btn-success btn-block">
+                            <i class="fa fa-television"></i><br>
+                            Sezon Ekle
+                        </a>
+                    </div>
+                    <div class="col-xs-3">
+                        <a href="?mod=episode" class="btn btn-info btn-block">
+                            <i class="fa fa-film"></i><br>
+                            Bölüm Ekle
+                        </a>
+                    </div>
+                    <div class="col-xs-3">
+                        <a href="#" onclick="clearSystemCache(); return false;" class="btn btn-warning btn-block">
+                            <i class="fa fa-refresh"></i><br>
+                            Önbellek Temizle
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sekmeli Panel -->
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <ul class="nav nav-tabs nav-tabs-solid">
+                    <li class="active"><a href="#latest" data-toggle="tab">Son Eklenenler</a></li>
+                    <li><a href="#series" data-toggle="tab">Diziler</a></li>
+                    <li><a href="#tools" data-toggle="tab">Araçlar</a></li>
+                    <li><a href="#stats" data-toggle="tab">İstatistikler</a></li>
+                </ul>
+            </div>
+            
+            <div class="panel-tab-content tab-content">
+                <!-- Son Eklenenler Sekmesi -->
+                <div class="tab-pane active" id="latest">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Başlık</th>
+                                    <th>Tür</th>
+                                    <th>Bağlı Olduğu İçerik</th>
+                                    <th>Tarih</th>
+                                    <th>İşlemler</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+HTML;
+
+// Son eklenenler listesi
+$items = $db->query("SELECT p.id, p.title, p.date, p.xfields,
+    CASE 
+        WHEN p.xfields LIKE '%type|series||%' THEN 'Dizi'
+        WHEN p.xfields LIKE '%type|season||%' THEN 'Sezon'
+        WHEN p.xfields LIKE '%type|episode||%' THEN 'Bölüm'
+    END as content_type,
+    CASE 
+        WHEN p.xfields LIKE '%series_id|%' THEN 
+            SUBSTRING_INDEX(SUBSTRING_INDEX(p.xfields, 'series_id|', -1), '||', 1)
+    END as series_id,
+    CASE 
+        WHEN p.xfields LIKE '%season_id|%' THEN 
+            SUBSTRING_INDEX(SUBSTRING_INDEX(p.xfields, 'season_id|', -1), '||', 1)
+    END as season_id
+FROM " . PREFIX . "_post p
+WHERE p.xfields LIKE '%type|%'
+ORDER BY p.date DESC LIMIT 15");
+
+while($row = $db->get_row($items)) {
+    $timestamp = intval($row['date']);
+    $formatted_date = date("d.m.Y H:i", $timestamp);
+    
+    // Bağlı olduğu içeriği bul
+    $parent_content = '';
+    if($row['content_type'] == 'Sezon' && $row['series_id']) {
+        $series = $db->super_query("SELECT title FROM " . PREFIX . "_post WHERE id = '{$row['series_id']}'");
+        $parent_content = $series['title'];
+    } elseif($row['content_type'] == 'Bölüm' && $row['season_id']) {
+        $season = $db->super_query("SELECT title FROM " . PREFIX . "_post WHERE id = '{$row['season_id']}'");
+        $parent_content = $season['title'];
+    }
+    
+    // İçerik türüne göre renk sınıfı
+    $type_class = '';
+    switch($row['content_type']) {
+        case 'Dizi': $type_class = 'label-primary'; break;
+        case 'Sezon': $type_class = 'label-success'; break;
+        case 'Bölüm': $type_class = 'label-info'; break;
+    }
+    
+    echo "<tr>
+            <td>{$row['id']}</td>
+            <td>{$row['title']}</td>
+            <td><span class='label {$type_class}'>{$row['content_type']}</span></td>
+            <td>{$parent_content}</td>
+            <td>{$formatted_date}</td>
+            <td>
+                <div class='btn-group'>
+                    <a href='?mod=editnews&action=editnews&id={$row['id']}' class='btn btn-xs btn-primary'>
+                        <i class='fa fa-pencil'></i> Düzenle
+                    </a>
+                    <a href='#' onclick='deleteItem({$row['id']}); return false;' class='btn btn-xs btn-danger'>
+                        <i class='fa fa-trash'></i>
+                    </a>
+                </div>
+            </td>
+        </tr>";
+}
+
+echo <<<HTML
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Diziler Sekmesi -->
+                <div class="tab-pane" id="series">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Dizi Adı</th>
+                                    <th>Sezon Sayısı</th>
+                                    <th>Bölüm Sayısı</th>
+                                    <th>Son Güncelleme</th>
+                                    <th>İşlemler</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+HTML;
+
+// Diziler listesi
+$series = $db->query("SELECT p.id, p.title, p.date, 
+    (SELECT COUNT(*) FROM " . PREFIX . "_post WHERE xfields LIKE CONCAT('%series_id|', p.id, '||%') AND xfields LIKE '%type|season||%') as season_count,
+    (SELECT COUNT(*) FROM " . PREFIX . "_post WHERE xfields LIKE CONCAT('%series_id|', p.id, '||%') AND xfields LIKE '%type|episode||%') as episode_count
+FROM " . PREFIX . "_post p
+WHERE p.xfields LIKE '%type|series||%'
+ORDER BY p.date DESC");
+
+while($row = $db->get_row($series)) {
+    $timestamp = intval($row['date']);
+    $formatted_date = date("d.m.Y H:i", $timestamp);
+    
+    echo "<tr>
+            <td>{$row['id']}</td>
+            <td>{$row['title']}</td>
+            <td>{$row['season_count']}</td>
+            <td>{$row['episode_count']}</td>
+            <td>{$formatted_date}</td>
+            <td>
+                <div class='btn-group'>
+                    <a href='?mod=editnews&action=editnews&id={$row['id']}' class='btn btn-xs btn-primary'>
+                        <i class='fa fa-pencil'></i> Düzenle
+                    </a>
+                    <a href='?mod=season&series_id={$row['id']}' class='btn btn-xs btn-success'>
+                        <i class='fa fa-plus'></i> Sezon Ekle
+                    </a>
+                    <a href='?mod=episode&series_id={$row['id']}' class='btn btn-xs btn-info'>
+                        <i class='fa fa-plus'></i> Bölüm Ekle
+                    </a>
+                </div>
+            </td>
+        </tr>";
+}
+
+echo <<<HTML
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Araçlar Sekmesi -->
+                <div class="tab-pane" id="tools">
+                    <div class="panel-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h4>İçerik İşlemleri</h4>
+                                <div class="btn-group-vertical btn-block">
+                                    <button onclick="generateSEOMeta()" class="btn btn-info btn-lg">
+                                        <i class="fa fa-tags"></i> Meta Açıklamaları Güncelle
+                                    </button>
+                                    <button onclick="checkBrokenLinks()" class="btn btn-info btn-lg">
+                                        <i class="fa fa-chain-broken"></i> Kırık Linkleri Kontrol Et
+                                    </button>
+                                    <button onclick="updateSlugs()" class="btn btn-info btn-lg">
+                                        <i class="fa fa-link"></i> SEF URL'leri Güncelle
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <h4>Sistem İşlemleri</h4>
+                                <div class="btn-group-vertical btn-block">
+                                    <button onclick="optimizeDB()" class="btn btn-warning btn-lg">
+                                        <i class="fa fa-database"></i> Veritabanını Optimize Et
+                                    </button>
+                                    <button onclick="generateSitemap()" class="btn btn-warning btn-lg">
+                                        <i class="fa fa-sitemap"></i> Site Haritası Oluştur
+                                    </button>
+                                    <button onclick="clearSystemCache()" class="btn btn-warning btn-lg">
+                                        <i class="fa fa-refresh"></i> Önbellek Temizle
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- İstatistikler Sekmesi -->
+                <div class="tab-pane" id="stats">
+                    <div class="panel-body">
+                        <div class="row">
+                            <div class="col-md-12">
+                                <h4>Son 7 Günlük İstatistikler</h4>
+                                <div class="table-responsive">
+                                    <table class="table table-bordered">
+                                        <thead>
+                                            <tr>
+                                                <th>Tarih</th>
+                                                <th>Diziler</th>
+                                                <th>Sezonlar</th>
+                                                <th>Bölümler</th>
+                                                <th>Toplam</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+HTML;
+
+// Son 7 günlük istatistikler
+for($i = 6; $i >= 0; $i--) {
+    $date = date('Y-m-d', strtotime("-$i days"));
+    $start = strtotime($date . ' 00:00:00');
+    $end = strtotime($date . ' 23:59:59');
+    
+    $daily_stats = $db->super_query("SELECT 
+        COUNT(CASE WHEN xfields LIKE '%type|series||%' THEN 1 END) as series,
+        COUNT(CASE WHEN xfields LIKE '%type|season||%' THEN 1 END) as seasons,
+        COUNT(CASE WHEN xfields LIKE '%type|episode||%' THEN 1 END) as episodes
+    FROM " . PREFIX . "_post 
+    WHERE date BETWEEN '$start' AND '$end'");
+    
+    $total = $daily_stats['series'] + $daily_stats['seasons'] + $daily_stats['episodes'];
+    
+    echo "<tr>
+        <td>" . date('d.m.Y', $start) . "</td>
+        <td>{$daily_stats['series']}</td>
+        <td>{$daily_stats['seasons']}</td>
+        <td>{$daily_stats['episodes']}</td>
+        <td>{$total}</td>
+    </tr>";
+}
+
+echo <<<HTML
+                                        </tbody>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function deleteItem(id) {
+    DLEconfirm('Bu içeriği silmek istediğinize emin misiniz?', 'Onay', function() {
+        $.post('engine/ajax/controller.php?mod=dizi_tools', {
+            action: 'delete',
+            id: id,
+            user_hash: '{$dle_login_hash}'
+        }, function(response) {
+            if(response.success) {
+                location.reload();
+            } else {
+                DLEalert(response.message || 'Bir hata oluştu!', 'Hata');
+            }
+        });
+    });
+}
+
+function clearSystemCache() {
+    ShowLoading('Önbellek temizleniyor...');
+    $.post('engine/ajax/controller.php?mod=dizi_tools', {
+        action: 'clear_cache',
+        user_hash: '{$dle_login_hash}'
+    }, function(response) {
+        HideLoading('');
+        DLEalert(response.message || 'Önbellek temizlendi', 'Bilgi');
+        setTimeout(function() {
+            location.reload();
+        }, 2000);
+    });
+}
+
+function generateSEOMeta() {
+    ShowLoading('Meta açıklamaları güncelleniyor...');
+    $.post('engine/ajax/controller.php?mod=dizi_tools', {
+        action: 'generate_meta',
+        user_hash: '{$dle_login_hash}'
+    }, function(response) {
+        HideLoading('');
+        DLEalert(response.message || 'Meta açıklamaları güncellendi', 'Bilgi');
+    });
+}
+
+function optimizeDB() {
+    DLEconfirm('Veritabanı optimizasyonu yapmak istediğinize emin misiniz?', 'Onay', function() {
+        ShowLoading('Veritabanı optimize ediliyor...');
+        $.post('engine/ajax/controller.php?mod=dizi_tools', {
+            action: 'optimize_db',
+            user_hash: '{$dle_login_hash}'
+        }, function(response) {
+            HideLoading('');
+            DLEalert(response.message || 'Veritabanı optimize edildi', 'Bilgi');
+        });
+    });
+}
+
+function checkBrokenLinks() {
+    ShowLoading('Kırık linkler kontrol ediliyor...');
+    $.post('engine/ajax/controller.php?mod=dizi_tools', {
+        action: 'check_links',
+        user_hash: '{$dle_login_hash}'
+    }, function(response) {
+        HideLoading('');
+        if(response.broken_links && response.broken_links.length > 0) {
+            let message = 'Bulunan kırık linkler:<br><ul>';
+            response.broken_links.forEach(function(link) {
+                message += '<li>' + link.title + ' - ' + link.url + '</li>';
+            });
+            message += '</ul>';
+            DLEalert(message, 'Kırık Linkler');
+        } else {
+            DLEalert('Kırık link bulunamadı', 'Bilgi');
+        }
+    });
+}
+
+function generateSitemap() {
+    ShowLoading('Site haritası oluşturuluyor...');
+    $.post('engine/ajax/controller.php?mod=dizi_tools', {
+        action: 'generate_sitemap',
+        user_hash: '{$dle_login_hash}'
+    }, function(response) {
+        HideLoading('');
+        DLEalert(response.message || 'Site haritası oluşturuldu', 'Bilgi');
+    });
+}
+
+function updateSlugs() {
+    ShowLoading('SEF URL\'ler güncelleniyor...');
+    $.post('engine/ajax/controller.php?mod=dizi_tools', {
+        action: 'update_slugs',
+        user_hash: '{$dle_login_hash}'
+    }, function(response) {
+        HideLoading('');
+        DLEalert(response.message || 'SEF URL\'ler güncellendi', 'Bilgi');
+    });
+}
+</script>
+HTML;
+
+echofooter();
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/ajax/dizi_tools.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) {
+    header( "HTTP/1.1 403 Forbidden" );
+    header ( 'Location: ../../' );
+    die( "Hacking attempt!" );
+}
+
+if($member_id['user_group'] != 1) {
+    die(json_encode(['error' => 'Yetkisiz erişim!']));
+}
+
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+
+switch($action) {
+    case 'delete':
+        $id = intval($_POST['id']);
+        if($id > 0) {
+            $db->query("DELETE FROM " . PREFIX . "_post WHERE id = '$id'");
+            clear_cache();
+            die(json_encode(['success' => true, 'message' => 'İçerik başarıyla silindi']));
+        }
+        die(json_encode(['error' => 'Geçersiz ID']));
+        break;
+        
+    case 'generate_meta':
+        // Boş meta açıklamaları güncelle
+        $db->query("UPDATE " . PREFIX . "_post SET metatitle = title WHERE metatitle = ''");
+        die(json_encode(['success' => true, 'message' => 'Meta açıklamaları güncellendi']));
+        break;
+        
+    case 'clear_cache':
+        clear_cache();
+        die(json_encode(['success' => true, 'message' => 'Önbellek temizlendi']));
+        break;
+        
+    case 'optimize_db':
+        // Veritabanı tablolarını optimize et
+        $tables = $db->query("SHOW TABLES LIKE '" . PREFIX . "_%'");
+        while($table = $db->get_row($tables)) {
+            $table_name = array_values(get_object_vars($table))[0];
+            $db->query("OPTIMIZE TABLE " . $table_name);
+        }
+        die(json_encode(['success' => true, 'message' => 'Veritabanı optimize edildi']));
+        break;
+        
+    case 'check_links':
+        // Kırık linkleri kontrol et
+        $broken_links = array();
+        $result = $db->query("SELECT id, title, xfields FROM " . PREFIX . "_post WHERE xfields LIKE '%type|%'");
+        
+        while($row = $db->get_row($result)) {
+            if(preg_match_all('/http[s]?:\/\/(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+/', $row['xfields'], $matches)) {
+                foreach($matches[0] as $url) {
+                    $headers = get_headers($url);
+                    if(!$headers || strpos($headers[0], '200') === false) {
+                        $broken_links[] = array(
+                            'id' => $row['id'],
+                            'title' => $row['title'],
+                            'url' => $url
+                        );
+                    }
+                }
+            }
+        }
+        
+        die(json_encode(['success' => true, 'broken_links' => $broken_links]));
+        break;
+        
+    case 'get_weekly_stats':
+        $stats = array();
+        $dates = array();
+        $series_counts = array();
+        $season_counts = array();
+        $episode_counts = array();
+        
+        // Son 7 günün verilerini al
+        for($i = 6; $i >= 0; $i--) {
+            $date = date('Y-m-d', strtotime("-$i days"));
+            $start = strtotime($date . ' 00:00:00');
+            $end = strtotime($date . ' 23:59:59');
+            
+            // Her içerik türü için ayrı sayım yap
+            $count = $db->super_query("SELECT 
+                COUNT(CASE WHEN xfields NOT LIKE '%type|%' THEN 1 END) as series,
+                COUNT(CASE WHEN xfields LIKE '%type|season%' THEN 1 END) as seasons,
+                COUNT(CASE WHEN xfields LIKE '%type|episode%' THEN 1 END) as episodes
+            FROM " . PREFIX . "_post 
+            WHERE date BETWEEN '$start' AND '$end'");
+            
+            $dates[] = date('d.m.Y', $start);
+            $series_counts[] = intval($count['series']);
+            $season_counts[] = intval($count['seasons']);
+            $episode_counts[] = intval($count['episodes']);
+        }
+        
+        die(json_encode([
+            'success' => true,
+            'dates' => $dates,
+            'series' => $series_counts,
+            'seasons' => $season_counts,
+            'episodes' => $episode_counts
+        ]));
+        break;
+        
+    case 'generate_sitemap':
+        // Site haritası oluştur
+        $sitemap = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL;
+        $sitemap .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . PHP_EOL;
+        
+        $result = $db->query("SELECT id, date, alt_name FROM " . PREFIX . "_post WHERE approve=1");
+        
+        while($row = $db->get_row($result)) {
+            $link = $config['http_home_url'] . date('Y/m/d/', $row['date']) . $row['alt_name'] . '.html';
+            $date = date('Y-m-d', $row['date']);
+            
+            $sitemap .= "\t<url>" . PHP_EOL;
+            $sitemap .= "\t\t<loc>$link</loc>" . PHP_EOL;
+            $sitemap .= "\t\t<lastmod>$date</lastmod>" . PHP_EOL;
+            $sitemap .= "\t\t<changefreq>weekly</changefreq>" . PHP_EOL;
+            $sitemap .= "\t\t<priority>0.8</priority>" . PHP_EOL;
+            $sitemap .= "\t</url>" . PHP_EOL;
+        }
+        
+        $sitemap .= '</urlset>';
+        
+        $file = ROOT_DIR . '/sitemap.xml';
+        file_put_contents($file, $sitemap);
+        
+        die(json_encode(['success' => true, 'message' => 'Site haritası başarıyla oluşturuldu']));
+        break;
+        
+    case 'update_slugs':
+        // SEF URL'leri güncelle
+        $result = $db->query("SELECT id, title FROM " . PREFIX . "_post WHERE alt_name = ''");
+        
+        while($row = $db->get_row($result)) {
+            $alt_name = totranslit($row['title'], true, false);
+            $db->query("UPDATE " . PREFIX . "_post SET alt_name = '$alt_name' WHERE id = '{$row['id']}'");
+        }
+        
+        die(json_encode(['success' => true, 'message' => 'SEF URL\'ler güncellendi']));
+        break;
+        
+    default:
+        die(json_encode(['error' => 'Geçersiz işlem']));
+}
+
+// Önbellek temizleme fonksiyonu
+function clear_cache() {
+    global $config;
+    
+    @unlink(ENGINE_DIR . '/cache/system/category.php');
+    @unlink(ENGINE_DIR . '/cache/system/cron.php');
+    @unlink(ENGINE_DIR . '/cache/system/banned.php');
+    @unlink(ENGINE_DIR . '/cache/system/plugins.php');
+    @unlink(ENGINE_DIR . '/cache/system/usergroup.php');
+    @unlink(ENGINE_DIR . '/cache/system/vote.php');
+    @unlink(ENGINE_DIR . '/cache/system/banners.php');
+    @unlink(ENGINE_DIR . '/cache/system/rating.php');
+    @unlink(ENGINE_DIR . '/cache/system/vars.php');
+    @unlink(ENGINE_DIR . '/cache/system/country.php');
+    @unlink(ENGINE_DIR . '/cache/system/metatags.php');
+    @unlink(ENGINE_DIR . '/cache/system/plugins.php');
+    
+    // Tüm sistem önbelleğini temizle
+    $fdir = opendir(ENGINE_DIR . '/cache/system/');
+    while ($file = readdir($fdir)) {
+        if($file != '.' and $file != '..' and $file != '.htaccess') {
+            @unlink(ENGINE_DIR . '/cache/system/' . $file);
+        }
+    }
+    
+    // Şablon önbelleğini temizle
+    clear_template_cache();
+}
+
+// Şablon önbelleği temizleme fonksiyonu
+function clear_template_cache() {
+    $fdir = opendir(ENGINE_DIR . '/cache/');
+    while ($file = readdir($fdir)) {
+        if($file != '.' and $file != '..' and $file != '.htaccess' and $file != 'system') {
+            @unlink(ENGINE_DIR . '/cache/' . $file);
+        }
+    }
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/tmdb_ayarlar.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) die("Access denied!");
+
+if($member_id['user_group'] != 1) {
+    msg("error", $lang['index_denied'], $lang['index_denied']);
+}
+
+// Tablo kontrolü ve oluşturma
+$table_check = $db->query("SHOW TABLES LIKE '" . PREFIX . "_tmdb_config'");
+if($db->num_rows($table_check) == 0) {
+    // Tablo yok, oluşturalım
+    $db->query("CREATE TABLE IF NOT EXISTS `" . PREFIX . "_tmdb_config` (
+        `id` int(11) NOT NULL AUTO_INCREMENT,
+        `tmdb_api_key` varchar(255) NOT NULL DEFAULT '',
+        `tmdb_language` varchar(5) NOT NULL DEFAULT 'tr-TR',
+        `last_update` datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    
+    // Varsayılan değerleri ekleyelim
+    $db->query("INSERT INTO `" . PREFIX . "_tmdb_config` (`tmdb_api_key`, `tmdb_language`) VALUES ('', 'tr-TR')");
+}
+
+// POST işlemi kontrolü
+if($_REQUEST['action'] == "save") {
+    $tmdb_api_key = $db->safesql($_POST['tmdb_api_key']);
+    $tmdb_language = $db->safesql($_POST['tmdb_language']);
+    
+    $db->query("UPDATE `" . PREFIX . "_tmdb_config` SET 
+        tmdb_api_key = '$tmdb_api_key',
+        tmdb_language = '$tmdb_language',
+        last_update = NOW()");
+        
+    msg("success", "Ayarlar Kaydedildi", "TMDB ayarları başarıyla güncellendi", "?mod=tmdb_ayarlar");
+}
+
+// Mevcut ayarları al
+$config_query = $db->super_query("SELECT * FROM `" . PREFIX . "_tmdb_config` LIMIT 1");
+
+if(!$config_query) {
+    $config_query = array('tmdb_api_key' => '', 'tmdb_language' => 'tr-TR');
+}
+
+// CSS stillerini ekle
+echo <<<HTML
+<style>
+.tmdb-results-container {
+    max-height: 500px;
+    overflow-y: auto;
+    padding: 15px;
+    margin-top: 15px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.tmdb-show {
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-bottom: 15px;
+}
+
+.tmdb-show:hover {
+    transform: scale(1.02);
+}
+
+.tmdb-show.selected {
+    border: 2px solid #3c8dbc;
+}
+
+.tmdb-show .thumbnail {
+    position: relative;
+    padding: 0;
+    margin-bottom: 0;
+}
+
+.tmdb-show .caption {
+    padding: 10px;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+}
+
+#season_list {
+    margin-top: 20px;
+}
+
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255,255,255,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+</style>
+HTML;
+// Güvenlik tokenini JavaScript için hazırla
+$js_token = $dle_login_hash;
+echoheader("<i class=\"fa fa-cog position-left\"></i><span class=\"text-semibold\">TMDB Ayarları</span>", array('?mod=tmdb_ayarlar' => 'TMDB API Yapılandırması'));
+?>
+
+<form action="?mod=tmdb_ayarlar&action=save" method="post" class="form-horizontal">
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            TMDB API Ayarları
+        </div>
+        <div class="panel-body">
+            <div class="form-group">
+                <label class="control-label col-sm-2">API Key:</label>
+                <div class="col-sm-10">
+                    <input type="text" name="tmdb_api_key" class="form-control" value="<?php echo htmlspecialchars($config_query['tmdb_api_key']); ?>" required>
+                    <span class="help-block">TMDB API anahtarını buraya girin. API anahtarı almak için <a href="https://www.themoviedb.org/settings/api" target="_blank">TMDB API</a> sayfasını ziyaret edin.</span>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="control-label col-sm-2">Dil:</label>
+                <div class="col-sm-10">
+                    <select name="tmdb_language" class="form-control">
+                        <option value="tr-TR" <?php echo ($config_query['tmdb_language'] == 'tr-TR') ? 'selected' : ''; ?>>Türkçe</option>
+                        <option value="en-US" <?php echo ($config_query['tmdb_language'] == 'en-US') ? 'selected' : ''; ?>>İngilizce</option>
+                    </select>
+                </div>
+            </div>
+            
+            <!-- TMDB Arama Test Bölümü -->
+            <div class="form-group">
+                <label class="control-label col-sm-2">TMDB Test:</label>
+                <div class="col-sm-10">
+                    <input type="text" id="tmdb_search" class="form-control" placeholder="Bir dizi adı yazarak API'yi test edin...">
+                </div>
+            </div>
+            
+            <div id="tmdb_results" class="tmdb-results-container" style="display:none;">
+                <!-- Sonuçlar buraya gelecek -->
+            </div>
+        </div>
+        
+        <div class="panel-footer">
+            <button type="submit" class="btn btn-success"><i class="fa fa-floppy-o position-left"></i>Ayarları Kaydet</button>
+        </div>
+    </div>
+</form>
+
+<script>
+$(function() {
+    let selectedShow = null;
+    const dle_login_hash = "<?php echo $js_token; ?>";
+    
+    $('#tmdb_search').on('input', function() {
+        let query = $(this).val();
+        if(query.length > 2) {
+            $.ajax({
+                url: 'engine/ajax/controller.php?mod=tmdb_fetch',
+                data: {
+                    action: 'search_show',
+                    query: query,
+                    user_hash: dle_login_hash,
+                    mod: 'tmdb_fetch'
+                },
+                method: 'POST',
+                dataType: 'json',
+                beforeSend: function() {
+                    $('#tmdb_results').html('<div class="alert alert-info">Aranıyor...</div>').show();
+                },
+                success: function(response) {
+                    if(response.error) {
+                        $('#tmdb_results').html(`<div class="alert alert-danger">${response.message}</div>`);
+                        return;
+                    }
+                    
+                    if(response.results && response.results.length > 0) {
+                        let html = '<div class="row">';
+                        response.results.forEach(function(show) {
+                            let posterUrl = show.poster_path ? 
+                                `https://image.tmdb.org/t/p/w185${show.poster_path}` : 
+                                'engine/skins/images/noimage.jpg';
+                            
+                            html += `
+                                <div class="col-md-4 tmdb-show" data-id="${show.id}">
+                                    <div class="thumbnail">
+                                        <img src="${posterUrl}" 
+                                             alt="${show.name}" 
+                                             style="width:100%">
+                                        <div class="caption">
+                                            <h4>${show.name}</h4>
+                                            <p>${show.first_air_date ? show.first_air_date.substr(0,4) : 'N/A'}</p>
+                                        </div>
+                                    </div>
+                                </div>`;
+                        });
+                        html += '</div>';
+                        $('#tmdb_results').html(html);
+                    } else {
+                        $('#tmdb_results').html('<div class="alert alert-info">Sonuç bulunamadı.</div>');
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.log('XHR:', xhr);
+                    console.log('Status:', status);
+                    console.log('Error:', error);
+                    $('#tmdb_results').html('<div class="alert alert-danger">Bir hata oluştu: ' + error + '</div>');
+                }
+            });
+        } else {
+            $('#tmdb_results').hide();
+        }
+    });
+    
+    $(document).on('click', '.tmdb-show', function() {
+        $('.tmdb-show').removeClass('selected');
+        $(this).addClass('selected');
+        selectedShow = $(this).data('id');
+    });
+});
+</script>
+<?php
+echofooter();
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/inc/helpers/tmdb_helper.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) die("Access denied!");
+
+class TMDBHelper {
+    private $api_key;
+    private $language;
+    private $base_url = "https://api.themoviedb.org/3";
+    private $image_base_url = "https://image.tmdb.org/t/p/";
+    private $db;
+    
+    public function __construct() {
+        global $db;
+        $this->db = $db;
+        
+        // TMDB config tablosunu kontrol et ve oluştur
+        $this->checkAndCreateTable();
+        
+        // Ayarları al
+        $config = $this->db->super_query("SELECT * FROM `" . PREFIX . "_tmdb_config` LIMIT 1");
+        
+        if($config) {
+            $this->api_key = $config['tmdb_api_key'];
+            $this->language = $config['tmdb_language'];
+        } else {
+            $this->api_key = '';
+            $this->language = 'tr-TR';
+        }
+    }
+    
+    private function checkAndCreateTable() {
+        $table_exists = $this->db->super_query("SHOW TABLES LIKE '" . PREFIX . "_tmdb_config'");
+        
+        if(!$table_exists) {
+            $this->db->query("CREATE TABLE IF NOT EXISTS `" . PREFIX . "_tmdb_config` (
+                `id` int(11) NOT NULL AUTO_INCREMENT,
+                `tmdb_api_key` varchar(255) NOT NULL DEFAULT '',
+                `tmdb_language` varchar(5) NOT NULL DEFAULT 'tr-TR',
+                `last_update` datetime DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+            
+            $this->db->query("INSERT INTO `" . PREFIX . "_tmdb_config` 
+                (`tmdb_api_key`, `tmdb_language`) VALUES ('', 'tr-TR')");
+        }
+    }
+    
+    public function searchTVShow($query) {
+        if(empty($this->api_key)) {
+            return array('error' => true, 'message' => 'API anahtarı bulunamadı');
+        }
+        
+        $params = array(
+            'api_key' => $this->api_key,
+            'language' => $this->language,
+            'query' => urlencode($query)
+        );
+        
+        return $this->makeRequest("/search/tv", $params);
+    }
+    
+    private function makeRequest($endpoint, $params = array()) {
+        $url = $this->base_url . $endpoint . '?' . http_build_query($params);
+        
+        $ch = curl_init();
+        curl_setopt_array($ch, array(
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HEADER => false,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_CONNECTTIMEOUT => 15,
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_USERAGENT => 'DLE TMDB Bot'
+        ));
+        
+        $response = curl_exec($ch);
+        $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        
+        if(curl_errno($ch)) {
+            curl_close($ch);
+            return array(
+                'error' => true,
+                'message' => 'CURL Hatası: ' . curl_error($ch)
+            );
+        }
+        
+        curl_close($ch);
+        
+        if($httpcode != 200) {
+            return array(
+                'error' => true,
+                'message' => 'TMDB API Hatası: ' . $httpcode
+            );
+        }
+        
+        return json_decode($response, true);
+    }
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/ajax/tmdb_search.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) die("Access denied!");
+
+include_once ENGINE_DIR . '/inc/helpers/tmdb_helper.php';
+
+$tmdb = new TMDBHelper();
+
+if($_REQUEST['action'] == 'search_show') {
+    $query = trim($_REQUEST['query']);
+    $results = $tmdb->searchTVShow($query);
+    
+    header('Content-Type: application/json');
+    echo json_encode($results);
+    die();
+}
+
+if($_REQUEST['action'] == 'get_seasons') {
+    $tmdb_id = intval($_REQUEST['tmdb_id']);
+    $show = $tmdb->getTVShowDetails($tmdb_id);
+    
+    header('Content-Type: application/json');
+    echo json_encode($show);
+    die();
+}
+
+if($_REQUEST['action'] == 'get_episodes') {
+    $tmdb_id = intval($_REQUEST['tmdb_id']);
+    $season = intval($_REQUEST['season']);
+    $episodes = $tmdb->getSeasonDetails($tmdb_id, $season);
+    
+    header('Content-Type: application/json');
+    echo json_encode($episodes);
+    die();
+}
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+	<file name="engine/ajax/tmdb_fetch.php">
+		<operation action="create">
+			<replacecode><![CDATA[<?php
+if(!defined('DATALIFEENGINE')) {
+    header("HTTP/1.1 403 Forbidden");
+    header('Location: ../../');
+    die("Hacking attempt!");
+}
+
+if(!$is_logged || $member_id['user_group'] != 1) {
+    die(json_encode(array('error' => true, 'message' => 'Yetkisiz erişim')));
+}
+
+if($mod != 'tmdb_fetch') {
+    die(json_encode(array('error' => true, 'message' => 'Geçersiz modül')));
+}
+
+// Güvenlik kontrolü
+if(!isset($_REQUEST['user_hash']) || $_REQUEST['user_hash'] != $dle_login_hash) {
+    die(json_encode(array('error' => true, 'message' => 'Geçersiz güvenlik tokeni')));
+}
+
+// Doğru include yöntemi
+include_once(DLEPlugins::Check(ENGINE_DIR . '/inc/helpers/tmdb_helper.php'));
+
+$tmdb = new TMDBHelper();
+
+if($_REQUEST['action'] == 'search_show') {
+    $query = trim($_REQUEST['query']);
+    
+    if(empty($query)) {
+        die(json_encode(array('error' => true, 'message' => 'Arama sorgusu boş olamaz')));
+    }
+    
+    $results = $tmdb->searchTVShow($query);
+    
+    if(isset($results['error'])) {
+        die(json_encode(array('error' => true, 'message' => $results['message'])));
+    }
+    
+    die(json_encode($results));
+}
+
+die(json_encode(array('error' => true, 'message' => 'Geçersiz işlem')));
+?>]]></replacecode>
+			<enabled>1</enabled>
+		</operation>
+	</file>
+</dleplugin>
